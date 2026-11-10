@@ -12,6 +12,7 @@ struct TopicDetailView: View {
     @State private var ctxBody = ""
     @State private var addingCtx = false
     @FocusState private var chatFocused: Bool
+    @FocusState private var fromFocused: Bool
 
     var t: Topic { d.topic }
 
@@ -46,16 +47,26 @@ struct TopicDetailView: View {
                         case .claude: claude(proxy)
                         }
                     }.padding(.top, 4)
+                    Color.clear.frame(height: 1).id("end")
                 }
                 .padding(.horizontal, 36).padding(.vertical, 28)
                 .frame(maxWidth: 860, alignment: .leading)
                 .frame(maxWidth: .infinity)
             }
             .background(Color.canvas)
+            // The Ask input stays at the bottom of the window, and new replies scroll into view.
+            .safeAreaInset(edge: .bottom) { if m.tab == .claude { chatInput } }
+            .onChange(of: d.chat.count) { if m.tab == .claude { withAnimation { proxy.scrollTo("end", anchor: .bottom) } } }
+            .onChange(of: d.chatBusy) { if m.tab == .claude { withAnimation { proxy.scrollTo("end", anchor: .bottom) } } }
+            .onChange(of: m.tab) { if m.tab == .claude { DispatchQueue.main.async { proxy.scrollTo("end", anchor: .bottom) } } }
         }
         .onAppear { requester = t.requester }
         .onChange(of: t.requester) { requester = t.requester }
+        .onChange(of: fromFocused) { if !fromFocused { saveRequester() } }
+        .onDisappear { saveRequester() }
     }
+
+    func saveRequester() { if requester != t.requester { let r = requester; m.patch(t.id) { $0.requester = r } } }
 
     // MARK: Header
 
@@ -64,13 +75,13 @@ struct TopicDetailView: View {
         ViewThatFits(in: .horizontal) {
             Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 4) {
                 GridRow { caption("urgency"); caption("status"); caption("followUp"); caption("from") }
-                GridRow { urgencyCell; statusCell; RemindControl(topic: t); fromCell }
+                GridRow { urgencyCell; statusCell; RemindControl(topic: t, quiet: TopicOps.reminderDue(t)); fromCell }
             }
             VStack(alignment: .leading, spacing: 10) {
                 VStack(alignment: .leading, spacing: 4) { caption("urgency"); urgencyCell }
                 Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 4) {
                     GridRow { caption("status"); caption("followUp"); caption("from") }
-                    GridRow { statusCell; RemindControl(topic: t); fromCell }
+                    GridRow { statusCell; RemindControl(topic: t, quiet: TopicOps.reminderDue(t)); fromCell }
                 }
             }
         }
@@ -104,7 +115,7 @@ struct TopicDetailView: View {
     }
 
     var fromCell: some View {
-        TextField("", text: $requester).frame(width: 150).onSubmit { m.patch(t.id) { $0.requester = requester } }
+        TextField("", text: $requester).frame(width: 150).focused($fromFocused).onSubmit { saveRequester() }
     }
 
     /// A due reminder stays here (and in the inbox) until she handles it.
@@ -120,36 +131,51 @@ struct TopicDetailView: View {
         .padding(10).background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
     }
 
-    /// The due date, and a different suggested level when she set urgency by hand (reason on hover).
-    @ViewBuilder var reasonLine: some View {
+    /// The due date (she can change it), the sender weight in effect, and a different suggested level when she set urgency by hand.
+    var reasonLine: some View {
         let suggest = t.urgencySource != "auto" ? t.aiUrgency.flatMap { $0 != t.urgency ? $0 : nil } : nil
-        if t.dueAt != nil || suggest != nil {
-            HStack(spacing: 14) {
-                if let due = t.dueAt {
-                    let late = (parseISO(due) ?? .distantFuture) < Date()
-                    Label("\(m.L("dueAt")) \(due.prefix(16).replacingOccurrences(of: "T", with: " "))", systemImage: "calendar")
-                        .foregroundStyle(late ? Color.red : Color.secondary)
-                }
-                if let ai = suggest {
-                    Text("\(m.L("aiWould")): \(m.levelName(ai))").help(m.pick(t.urgencyReasonEn, t.urgencyReasonZh))
-                }
-            }.font(.caption).foregroundStyle(.secondary)
-        }
+        let sender = m.row(t.id)?.sender
+        return HStack(spacing: 14) {
+            DueControl(topic: t)
+            if let p = sender, p.weight != 1 {
+                Label("\(m.L("c_weight")) \(p.weight.formatted()) (\(p.name))", systemImage: "person.crop.circle").help(m.L("weightHelp"))
+            }
+            if let ai = suggest {
+                Text("\(m.L("aiWould")): \(m.levelName(ai))").help(m.pick(t.urgencyReasonEn, t.urgencyReasonZh))
+            }
+        }.font(.caption).foregroundStyle(.secondary)
     }
+
+    @Environment(\.openWindow) var openWindow
 
     var aiLine: some View {
         HStack(spacing: 10) {
             switch t.briefState {
             case "running": ProgressView().controlSize(.small); Text(m.L("writing"))
             case "queued": ProgressView().controlSize(.small); Text(m.L("queued"))
-            case "error": Text(m.L("briefError")).foregroundStyle(.red); Button(m.L("retry")) { m.refreshBrief(t.id) }.buttonStyle(.link)
+            case "error":
+                let err = d.jobs.last { $0.kind == "brief" && $0.status == "error" }?.error ?? ""
+                Text(m.L("briefError") + (err.isEmpty ? "" : " " + m.pick(AppModel.explain(err), AppModel.explain(err, zh: true)))).foregroundStyle(.red)
+                Button(m.L("retry")) { m.refreshBrief(t.id) }.buttonStyle(.link)
+                Button(m.L("details")) { openWindow(id: "activity") }.buttonStyle(.link)
             default: EmptyView()
             }
         }.font(.caption).foregroundStyle(.secondary)
     }
 
+    /// Folded to one line by default so the summary starts higher.
     @ViewBuilder var subtopics: some View {
-        if !d.children.isEmpty { subtopicList }
+        if !d.children.isEmpty {
+            let key = "subs:" + t.id
+            DisclosureGroup(isExpanded: Binding(get: { m.expanded.contains(key) }, set: { if $0 { m.expanded.insert(key) } else { m.expanded.remove(key) } })) {
+                subtopicList.padding(.top, 4)
+            } label: {
+                HStack(spacing: 6) {
+                    Text("\(m.L("subtopics")) \(d.children.count)").font(.callout.weight(.medium))
+                    ForEach(d.children.prefix(8), id: \.id) { Circle().fill($0.urgency.color).frame(width: 6, height: 6).opacity($0.status == .done ? 0.3 : 1) }
+                }
+            }
+        }
     }
 
     var subtopicList: some View {
@@ -178,10 +204,15 @@ struct TopicDetailView: View {
 
     @ViewBuilder var context: some View {
         ForEach(d.artifacts) { a in
-            EntryRow(key: "a:" + a.id, icon: a.type == "link" ? "link" : "note.text",
-                     title: a.title.isEmpty ? (a.url ?? "Note") : a.title,
-                     subtitle: m.pick(a.summaryEn, a.summaryZh).isEmpty ? String(a.content.prefix(160)) : m.pick(a.summaryEn, a.summaryZh),
-                     raw: a.content.isEmpty ? nil : a.content, url: a.url, when: nil)
+            Group {
+                if a.type == "link" && a.content.isEmpty { LinkPendingRow(topicId: t.id, artifact: a) }
+                else {
+                    EntryRow(key: "a:" + a.id, icon: a.type == "link" ? "link" : "note.text",
+                             title: a.title.isEmpty || a.title == a.url ? (a.url.flatMap { URL(string: $0)?.host } ?? a.url ?? "Note") : a.title,
+                             subtitle: m.pick(a.summaryEn, a.summaryZh).isEmpty ? String(a.content.prefix(160)) : m.pick(a.summaryEn, a.summaryZh),
+                             raw: a.content.isEmpty ? nil : a.content, url: a.url, when: nil)
+                }
+            }
             .draggable("artifact|\(a.id)|\(t.id)")
             .contextMenu { MoveMenu(exclude: t.id) { m.moveArtifact(a.id, from: t.id, to: $0) } }
         }
@@ -231,13 +262,21 @@ struct TopicDetailView: View {
             }
         }
         if d.chatBusy { HStack { ProgressView().controlSize(.small); Text(m.L("thinking")).foregroundStyle(.secondary) }.id("busy") }
-        HStack {
-            Button { chatFocused = true; AppModel.dictate() } label: { Image(systemName: "mic") }.help(m.L("dictate"))
-            TextField(m.L("ask"), text: $chatText).textFieldStyle(.roundedBorder).focused($chatFocused)
-                .onSubmit { m.sendChat(t.id, chatText); chatText = "" }
-            Button(m.L("send")) { m.sendChat(t.id, chatText); chatText = "" }.keyboardShortcut(.return, modifiers: .command)
-        }.padding(.top, 8).id("input")
-        Text(m.L("askNote")).font(.caption).foregroundStyle(.secondary)
+    }
+
+    var chatInput: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Button { chatFocused = true; AppModel.dictate() } label: { Image(systemName: "mic") }.help(m.L("dictate"))
+                TextField(m.L("ask"), text: $chatText).textFieldStyle(.roundedBorder).focused($chatFocused)
+                    .onSubmit { m.sendChat(t.id, chatText); chatText = "" }
+                Button(m.L("send")) { m.sendChat(t.id, chatText); chatText = "" }.keyboardShortcut(.return, modifiers: .command)
+            }
+            Text(m.L("askNote")).font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 36).padding(.vertical, 10)
+        .frame(maxWidth: 860).frame(maxWidth: .infinity)
+        .background(.bar)
     }
 }
 
@@ -342,13 +381,69 @@ struct ActionList: View {
 }
 
 /// Shows the reminder ("10:30 (in 2 h)" / "2 h overdue") and a menu to set it.
+/// `quiet`: the due banner above already says it is overdue, so this shows the plain time.
 struct RemindControl: View {
     @Environment(AppModel.self) var m
     let topic: Topic
+    var quiet = false
     var body: some View {
         let label = topic.remindAt.map { reminderLabel($0, zh: m.lang == "zh") }
-        RemindMenu(topic: topic, label: label?.0 ?? m.L("remindSet"))
-            .foregroundStyle(label?.1 == true ? Color.orange : Color.primary)
+        RemindMenu(topic: topic, label: quiet ? (topic.remindAt.map(fmtTime) ?? m.L("remindSet")) : label?.0 ?? m.L("remindSet"))
+            .foregroundStyle(label?.1 == true && !quiet ? Color.orange : Color.primary)
+    }
+}
+
+/// The due date, editable: Claude's guess can be wrong, and an overdue date triples the score.
+struct DueControl: View {
+    @Environment(AppModel.self) var m
+    let topic: Topic
+    @State private var picking = false
+    @State private var day = Date()
+    var body: some View {
+        let due = topic.dueAt.flatMap { parseISO($0) ?? parseISO(String($0.prefix(10))) }
+        let late = due.map { $0 < Date() && !Calendar.current.isDateInToday($0) } ?? false
+        Button { day = due ?? Date(); picking = true } label: {
+            Label(topic.dueAt.map { "\(m.L("dueAt")) \($0.prefix(16).replacingOccurrences(of: "T", with: " "))" + (topic.dueSource == "ai" ? " · " + m.L("auto") : "") } ?? m.L("setDue"),
+                  systemImage: "calendar")
+                .foregroundStyle(late ? Color.red : Color.secondary)
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $picking) {
+            VStack(alignment: .leading, spacing: 10) {
+                DatePicker("", selection: $day, displayedComponents: .date).datePickerStyle(.graphical).labelsHidden()
+                HStack {
+                    if topic.dueAt != nil { Button(m.L("clearDue")) { m.patch(topic.id) { $0.dueAt = .some(nil) }; picking = false } }
+                    Spacer()
+                    Button(m.L("cancel")) { picking = false }
+                    Button(m.L("ok")) { let d = localDay(day); m.patch(topic.id) { $0.dueAt = .some(d) }; picking = false }.keyboardShortcut(.defaultAction)
+                }
+            }.padding(14)
+        }
+    }
+}
+
+/// A link that has no text yet: being read, or failed with a retry.
+struct LinkPendingRow: View {
+    @Environment(AppModel.self) var m
+    let topicId: String
+    let artifact: Artifact
+    var body: some View {
+        let reading = m.readingLinks.contains(artifact.id)
+        let host = artifact.url.flatMap { URL(string: $0)?.host } ?? artifact.title
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Image(systemName: "link").foregroundStyle(.secondary).frame(width: 16).padding(.leading, 20)
+                Text(artifact.title.isEmpty || artifact.title == artifact.url ? host : artifact.title).fontWeight(.medium).lineLimit(1)
+                if reading { ProgressView().controlSize(.small); Text(m.L("reading")).font(.caption).foregroundStyle(.secondary) }
+                else {
+                    Text(m.L("readFailed")).font(.caption).foregroundStyle(.orange)
+                    Button(m.L("retry")) { m.retryLink(topicId, artifact) }.buttonStyle(.link).font(.caption)
+                }
+                Spacer()
+                if let u = artifact.url.flatMap(URL.init(string:)) { Link("\(m.L("open")) ↗", destination: u).font(.caption) }
+            }
+            Divider()
+        }
     }
 }
 
@@ -397,12 +492,57 @@ struct OptionalDate: View {
     }
 }
 
-/// Markdown for briefs and replies: headings, bullets, numbered items, quotes, and inline styles.
+/// Markdown for briefs and replies: headings, bullets, numbered items, quotes, code blocks, tables, and inline styles.
 struct MarkdownText: View {
     let text: String
+
+    enum Block { case line(String), code(String), table([[String]]) }
+
+    /// Fenced code and runs of `| a | b |` lines become blocks; everything else stays line by line.
+    var blocks: [Block] {
+        var out: [Block] = [], code: [String]? = nil, table: [[String]] = []
+        func flushTable() { if !table.isEmpty { out.append(.table(table)); table = [] } }
+        for raw in text.components(separatedBy: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("```") {
+                if let c = code { out.append(.code(c.joined(separator: "\n"))); code = nil } else { flushTable(); code = [] }
+                continue
+            }
+            if code != nil { code!.append(raw); continue }
+            if line.hasPrefix("|") && line.hasSuffix("|") && line.count > 1 {
+                let cells = line.dropFirst().dropLast().split(separator: "|", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
+                if !cells.allSatisfy({ $0.allSatisfy { "-: ".contains($0) } }) { table.append(cells) } // skip the |---| row
+                continue
+            }
+            flushTable()
+            out.append(.line(raw))
+        }
+        if let c = code { out.append(.code(c.joined(separator: "\n"))) }
+        flushTable()
+        return out
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            ForEach(Array(text.components(separatedBy: "\n").enumerated()), id: \.offset) { _, raw in
+            ForEach(Array(blocks.enumerated()), id: \.offset) { _, b in
+                switch b {
+                case .code(let c):
+                    ScrollView(.horizontal) { Text(c).font(.callout.monospaced()).padding(8) }
+                        .frame(maxWidth: .infinity, alignment: .leading).background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+                case .table(let rows):
+                    Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 4) {
+                        ForEach(Array(rows.enumerated()), id: \.offset) { i, r in
+                            GridRow { ForEach(Array(r.enumerated()), id: \.offset) { _, c in Text(inline(c)).fontWeight(i == 0 ? .semibold : .regular) } }
+                            if i == 0 { Divider() }
+                        }
+                    }.padding(8).background(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+                case .line(let raw): lineView(raw)
+                }
+            }
+        }.textSelection(.enabled)
+    }
+
+    @ViewBuilder func lineView(_ raw: String) -> some View {
                 let line = raw.trimmingCharacters(in: .whitespaces)
                 if line.isEmpty { Spacer().frame(height: 2) }
                 else if line.hasPrefix("#") {
@@ -415,8 +555,6 @@ struct MarkdownText: View {
                     Text(inline(String(line.dropFirst()).trimmingCharacters(in: .whitespaces))).padding(.leading, 8)
                         .overlay(alignment: .leading) { Rectangle().fill(.quaternary).frame(width: 2) }
                 } else { Text(inline(line)) }
-            }
-        }.textSelection(.enabled)
     }
     func inline(_ s: String) -> AttributedString {
         (try? AttributedString(markdown: s, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(s)

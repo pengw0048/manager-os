@@ -21,11 +21,10 @@ struct SheetHost: View {
     }
 
     func topicPicker(_ label: String, exclude: String?, allowNone: Bool) -> some View {
-        Picker(label, selection: $target) {
-            if allowNone { Text(m.L("none")).tag("") }
-            ForEach(m.rows.filter { $0.id != exclude && !$0.topic.isArchived && $0.topic.status != .done && $0.topic.parentId != exclude }) { r in
-                Text((r.topic.parentId == nil ? "" : "↳ ") + m.title(r.topic)).tag(r.id)
-            }
+        HStack {
+            Text(label)
+            TopicPickerButton(selection: $target, exclude: exclude, noneValue: allowNone ? "" : nil, noneLabel: allowNone ? m.L("none") : nil)
+            Spacer()
         }
     }
 
@@ -162,8 +161,15 @@ struct KnowledgeView: View {
             }.padding(20).background(Color.canvas)
         }
         .onAppear { files = Knowledge.list(m.home); load(selected) }
+        .onDisappear { flush() }
     }
-    func load(_ path: String) { selected = path; body_ = Knowledge.read(m.home, path); files = Knowledge.list(m.home) }
+    /// Saves typing that is still waiting for the 0.6 s pause, before switching files or closing.
+    func flush() {
+        guard saveTask != nil else { return }
+        saveTask?.cancel(); saveTask = nil
+        if body_ != Knowledge.read(m.home, selected) { try? Knowledge.write(m.home, selected, body_) }
+    }
+    func load(_ path: String) { flush(); selected = path; body_ = Knowledge.read(m.home, path); files = Knowledge.list(m.home) }
 }
 
 struct ActivityView: View {
@@ -266,6 +272,7 @@ struct SettingsView: View {
         Form {
             Section(m.L("s_lang")) { Picker("", selection: $m.lang) { Text("English").tag("en"); Text("中文").tag("zh") }.pickerStyle(.segmented).labelsHidden() }
             SlackSettings()
+            DigestSettings()
             Section {
                 Text(m.L("s_levelsD")).font(.caption).foregroundStyle(.secondary)
                 ForEach(m.levels) { l in LevelRow(level: l) }
@@ -284,6 +291,30 @@ struct SettingsView: View {
             }
         }.formStyle(.grouped).frame(width: 760, height: 560)
     }
+}
+
+/// Morning and evening digests (weekdays): a page of what changed, opened with a short AI overview.
+struct DigestSettings: View {
+    @Environment(AppModel.self) var m
+    @State private var on = true
+    @State private var morning = Date()
+    @State private var evening = Date()
+    var body: some View {
+        Section {
+            Text(m.L("dg_D")).font(.caption).foregroundStyle(.secondary)
+            Toggle(m.L("dg_on"), isOn: $on).onChange(of: on) { m.store.setSetting("digest_enabled", on ? "1" : "0") }
+            DatePicker(m.L("cu_morning"), selection: $morning, displayedComponents: .hourAndMinute).disabled(!on)
+                .onChange(of: morning) { m.store.setSetting("digest_morning", hm(morning)) }
+            DatePicker(m.L("cu_evening"), selection: $evening, displayedComponents: .hourAndMinute).disabled(!on)
+                .onChange(of: evening) { m.store.setSetting("digest_evening", hm(evening)) }
+        } header: { Text(m.L("dg_title")) }
+        .onAppear {
+            on = m.store.setting("digest_enabled") != "0"
+            morning = Catchup.at(m.store.setting("digest_morning") ?? Catchup.defaultMorning, on: Date()) ?? Date()
+            evening = Catchup.at(m.store.setting("digest_evening") ?? Catchup.defaultEvening, on: Date()) ?? Date()
+        }
+    }
+    func hm(_ d: Date) -> String { let c = Calendar.current.dateComponents([.hour, .minute], from: d); return String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0) }
 }
 
 struct LevelRow: View {

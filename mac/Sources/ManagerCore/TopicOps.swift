@@ -132,7 +132,7 @@ public enum TopicOps {
     }
 
     /// Fill a link's context item once its page has been read (or record why it could not be).
-    public static func fillArtifact(_ store: Store, topicId: String, artifactId: String, title: String?, content: String, ok: Bool) throws {
+    public static func fillArtifact(_ store: Store, topicId: String, artifactId: String, title: String?, content: String, ok: Bool, why: (String, String)? = nil) throws {
         try store.write(topics: [topicId]) { db in
             if let title, !title.isEmpty { try db.execute(sql: "update artifacts set title = ? where id = ?", arguments: [title, artifactId]) }
             try db.execute(sql: "update artifacts set content = ?, summary_en = '', summary_zh = '' where id = ?", arguments: [content, artifactId])
@@ -140,8 +140,8 @@ public enum TopicOps {
             let name = title ?? stored ?? ""
             let url = try String.fetchOne(db, sql: "select url from artifacts where id = ?", arguments: [artifactId])
             try Store.addTimeline(db, TimelineEntry(topicId: topicId, actor: "me", kind: "context",
-                en: ok ? "Read linked page: \(name)" : "Could not read the linked page (sign-in needed?): \(name)",
-                zh: ok ? "已读取链接页面：\(name)" : "无法读取链接页面（可能需要登录）：\(name)",
+                en: ok ? "Read linked page: \(name)" : "Could not read the linked page (\(why?.0 ?? "sign-in needed?")): \(name)",
+                zh: ok ? "已读取链接页面：\(name)" : "无法读取链接页面（\(why?.1 ?? "可能需要登录")）：\(name)",
                 sourceUrl: url))
         }
     }

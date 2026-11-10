@@ -96,7 +96,8 @@ struct ManagerOSApp: App {
     @State private var model: AppModel? = try? AppModel()
 
     var body: some Scene {
-        WindowGroup("Manager OS", id: "main") {
+        // A single window: opening it again from the menu bar brings it back instead of adding another.
+        Window("Manager OS", id: "main") {
             if let model {
                 ContentView().environment(model)
             } else {
@@ -145,7 +146,7 @@ struct MenuBarView: View {
         Text("\(m.count(.needs)) \(m.L("needsMeN"))")
         Divider()
         ForEach(Array(top)) { r in
-            Button("\(r.topic.urgency.rawValue) · \(m.title(r.topic))") { m.select(r.id); openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
+            Button("\(m.levelName(r.topic.urgency)) · \(m.title(r.topic))") { m.select(r.id); openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
         }
         Divider()
         Button(m.L("openApp")) { openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true) }
@@ -155,6 +156,7 @@ struct MenuBarView: View {
 
 struct ContentView: View {
     @Environment(AppModel.self) var m
+    @Environment(\.openWindow) var openWindow
     var body: some View {
         @Bindable var m = m
         TopicsSplit()
@@ -163,11 +165,13 @@ struct ContentView: View {
         .toolbarBackground(.hidden, for: .windowToolbar) // content runs up under the toolbar, so no band or line ends at the sidebar edge
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                Button { m.pasteAsTopic() } label: { Label(m.L("pasteTopic"), systemImage: "doc.on.clipboard") }.help(m.L("pasteTopicHelp"))
-                Button { m.sheet = .newTopic(parent: nil) } label: { Label(m.L("newTopic"), systemImage: "plus") }
-                Button { m.showAssistant.toggle() } label: { Label(m.L("assistant"), systemImage: "sidebar.right") }.help(m.L("assistant") + " ⌘K")
+                Button { m.pasteAsTopic() } label: { Label(m.L("pasteShort"), systemImage: "doc.on.clipboard") }.help(m.L("pasteTopicHelp"))
+                Button { m.sheet = .newTopic(parent: nil) } label: { Label(m.L("newTopic"), systemImage: "plus") }.help(m.L("newTopic") + " ⌘N")
+                Button { m.showAssistant.toggle() } label: { Label(m.L("assistant"), systemImage: "bubble.left.and.text.bubble.right") }.help(m.L("assistant") + " ⌘K")
             }
         }
+        .labelStyle(.titleAndIcon)
+        .onAppear { m.openMain = { openWindow(id: "main") } }
         .sheet(item: $m.sheet) { SheetHost(kind: $0).environment(m) }
         .confirmationDialog(m.L("deleteQ"), isPresented: Binding(get: { m.deleting != nil }, set: { if !$0 { m.deleting = nil } }), presenting: m.deleting) { id in
             Button(m.L("deleteBtn"), role: .destructive) { m.delete(id) }
@@ -189,9 +193,10 @@ struct TopicsSplit: View {
             SidebarView().navigationSplitViewColumnWidth(min: 280, ideal: 330, max: 460)
         } detail: {
             Group {
-                if m.showingSort { SortView() }
+                if m.showingCatchup { CatchupView() }
+                else if m.showingSort { SortView() }
                 else if let d = m.detail { TopicDetailView(d: d).id(d.topic.id) }
-                else { Text(m.L("empty")).foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.canvas) }
+                else { EmptyStateView() }
             }
             .frame(minWidth: 560)
             .assistantInspector()
@@ -219,12 +224,22 @@ struct SidebarView: View {
         let selection = Binding<String?>(get: { m.selection }, set: { if let id = $0 { m.select(id) } })
         VStack(spacing: 0) {
             if m.searchText.isEmpty {
-                Picker("", selection: $m.view) {
-                    ForEach(ListView.allCases) { v in Text("\(m.L("v_" + v.rawValue)) (\(m.count(v)))").tag(v) }
-                }.labelsHidden().padding(.horizontal, 10).padding(.vertical, 8)
+                ViewSwitcher().padding(.horizontal, 10).padding(.vertical, 8)
                 if m.view == .archived { Text(m.L("archivedNote")).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 12).padding(.bottom, 6) }
+                if let c = m.catchup {
+                    Button { m.showingCatchup = true; m.showingSort = false; m.page = .topics } label: {
+                        HStack {
+                            Image(systemName: c.kind == .away ? "clock.arrow.circlepath" : "newspaper")
+                            Text(m.L("cu_" + c.kind.rawValue)).fontWeight(.medium)
+                            Spacer()
+                            Text(m.L("since") + " " + fmtTime(c.since)).font(.caption).foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 10).padding(.vertical, 7).contentShape(Rectangle())
+                        .background(m.showingCatchup ? Color.accentColor.opacity(0.12) : Color.accentColor.opacity(0.05), in: RoundedRectangle(cornerRadius: 7))
+                    }.buttonStyle(.plain).padding(.horizontal, 10).padding(.bottom, 4)
+                }
                 if !m.toSort.isEmpty || !m.autoSorted.isEmpty {
-                    Button { m.showingSort = true; m.page = .topics } label: {
+                    Button { m.showingSort = true; m.showingCatchup = false; m.page = .topics } label: {
                         HStack {
                             Image(systemName: "tray.full")
                             Text(m.L("toSort")).fontWeight(.medium)
@@ -238,17 +253,30 @@ struct SidebarView: View {
                         .background(m.showingSort ? Color.accentColor.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 7))
                     }.buttonStyle(.plain).padding(.horizontal, 10)
                 }
+                let sec = m.listSections()
                 List(selection: selection) {
-                    ForEach(m.listItems(), id: \.row.id) { item in
-                        TopicRowView(row: item.row, child: item.child).tag(item.row.id).contextMenu { TopicMenuItems(id: item.row.id) }
+                    if sec.due.isEmpty { rows(sec.rest) }
+                    else {
+                        Section(m.L("v_follow")) { rows(sec.due) }
+                        Section(m.L("v_" + m.view.rawValue)) { rows(sec.rest) }
                     }
                 }
+                .overlay { if sec.due.isEmpty && sec.rest.isEmpty && !m.rows.isEmpty { Text(m.L("emptyView")).font(.callout).foregroundStyle(.secondary) } }
             } else {
                 SearchResultsView()
             }
+            SlackStatusLine()
         }
         .searchable(text: $m.searchText, placement: .sidebar, prompt: m.L("search"))
         .onSubmit(of: .search) { m.runAISearch() }
+    }
+}
+
+extension SidebarView {
+    func rows(_ items: [(row: TopicRow, child: Bool)]) -> some View {
+        ForEach(items, id: \.row.id) { item in
+            TopicRowView(row: item.row, child: item.child).tag(item.row.id).contextMenu { TopicMenuItems(id: item.row.id) }
+        }
     }
 }
 
@@ -262,8 +290,15 @@ struct TopicRowView: View {
         HStack(alignment: .top, spacing: 8) {
             Circle().fill(t.urgency.color).frame(width: 8, height: 8).padding(.top, 5)
             VStack(alignment: .leading, spacing: 2) {
-                Text(m.title(t)).fontWeight(child ? .regular : .medium).lineLimit(2)
-                Text([t.requester, ago(t.lastActivityAt)].filter { !$0.isEmpty }.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 5) {
+                    Text(m.title(t)).fontWeight(child ? .regular : .medium).lineLimit(2)
+                    if row.hasNews { Circle().fill(Color.accentColor).frame(width: 6, height: 6).help(m.L("newReplies")) }
+                }
+                HStack(spacing: 4) {
+                    if t.status != .needsMe { Image(systemName: TopicRowView.statusIcon[t.status] ?? "circle").help(m.L("st_" + t.status.rawValue)) }
+                    Text([t.status != .needsMe && m.view == .all ? m.L("st_" + t.status.rawValue) : "", t.requester, ago(t.lastActivityAt)]
+                        .filter { !$0.isEmpty }.joined(separator: " · "))
+                }.font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 4)
             if row.followupDue, let r = t.remindAt { Label(reminderLabel(r, zh: m.lang == "zh").0, systemImage: "bell.fill").font(.caption).foregroundStyle(.orange) }
@@ -275,6 +310,8 @@ struct TopicRowView: View {
         .background(dropTarget ? Color.accentColor.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
         .dropDestination(for: String.self) { items, _ in m.drop(items, on: row.id) } isTargeted: { dropTarget = $0 }
     }
+    static let statusIcon: [TopicStatus: String] = [.waiting: "hourglass", .snoozed: "moon.zzz", .done: "checkmark.circle"]
+
     /// "Overdue" / "Today" / "Tomorrow" / "Yesterday" / "Nov 14" for a due date.
     func dueText(_ due: String) -> some View {
         let d = parseISO(due) ?? parseISO(due + "T23:59:00Z")
@@ -297,6 +334,67 @@ struct TopicRowView: View {
         if mins < 60 { return zh ? "\(Int(mins)) 分钟前" : "\(Int(mins)) min ago" }
         if mins < 1440 { return zh ? "\(Int(mins / 60)) 小时前" : "\(Int(mins / 60)) h ago" }
         return zh ? "\(Int(mins / 1440)) 天前" : "\(Int(mins / 1440)) d ago"
+    }
+}
+
+/// The list views as small rows with counts, so the other views' sizes stay visible.
+struct ViewSwitcher: View {
+    @Environment(AppModel.self) var m
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 4), GridItem(.flexible(), spacing: 4)], spacing: 3) {
+            ForEach(ListView.allCases) { v in
+                Button { m.view = v } label: {
+                    HStack(spacing: 4) {
+                        Text(m.L("v_" + v.rawValue)).lineLimit(1)
+                        Spacer(minLength: 2)
+                        Text("\(m.count(v))").monospacedDigit().foregroundStyle(v == .follow && m.count(v) > 0 ? Color.orange : Color.secondary)
+                    }
+                    .font(.callout).padding(.horizontal, 8).padding(.vertical, 4).contentShape(Rectangle())
+                    .background(m.view == v ? Color.accentColor.opacity(0.15) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+                    .fontWeight(m.view == v ? .semibold : .regular)
+                }.buttonStyle(.plain)
+            }
+        }
+    }
+}
+
+/// One line at the bottom of the sidebar: is Slack connected, and when did the last message arrive.
+struct SlackStatusLine: View {
+    @Environment(AppModel.self) var m
+    var body: some View {
+        let c = m.slackCtl
+        if c.enabled {
+            Divider()
+            HStack(spacing: 6) {
+                Circle().fill(c.status == .connected ? Color.green : Color.orange).frame(width: 7, height: 7)
+                Text("Slack · " + m.L("st_\(c.status)") + (c.lastEventAt.map { " · " + m.L("slackLastShort") + " " + fmtTime(ISO8601DateFormatter().string(from: $0)) } ?? ""))
+                    .lineLimit(1)
+                Spacer()
+                if c.status == .signedOut { Button(m.L("signIn")) { c.showWindow() }.buttonStyle(.link) }
+            }.font(.caption).foregroundStyle(.secondary).padding(.horizontal, 12).padding(.vertical, 6)
+        }
+    }
+}
+
+/// First launch (no topics yet): how to get topics in.
+struct EmptyStateView: View {
+    @Environment(AppModel.self) var m
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if m.rows.isEmpty {
+                Text(m.L("welcome")).font(.title2.weight(.semibold))
+                Text(m.L("welcomeD")).foregroundStyle(.secondary)
+                HStack(spacing: 10) {
+                    if !m.slackCtl.enabled { Button(m.L("slackEnable")) { m.slackCtl.setEnabled(true) }.buttonStyle(.borderedProminent) }
+                    Button(m.L("newTopic")) { m.sheet = .newTopic(parent: nil) }
+                    Button(m.L("pasteTopic")) { m.pasteAsTopic() }.help(m.L("pasteTopicHelp"))
+                }
+                Text(m.L("pasteTopicHelp")).font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text(m.L("pickTopic")).foregroundStyle(.secondary)
+            }
+        }
+        .padding(40).frame(maxWidth: 560).frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.canvas)
     }
 }
 

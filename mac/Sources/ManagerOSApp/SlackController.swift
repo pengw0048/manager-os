@@ -15,6 +15,11 @@ final class SlackController: NSObject {
     var team = ""
     var lastEventAt: Date?
     var received = 0
+    /// Set when automatic sorting failed; cleared on the next success.
+    var triageError: String?
+    private var triageFailures = 0
+    private var nextTriage = Date.distantPast
+    private var ticks = 0
     private var webView: WKWebView?
     private var window: NSWindow?
     private var hellos = 0
@@ -68,12 +73,26 @@ final class SlackController: NSObject {
     func showWindow() { start(); window?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
 
     private func tick() {
-        if !signedIn { checkSignedIn() }
+        ticks += 1
+        if !signedIn || ticks % 60 == 0 { checkSignedIn() } // every 5 min once signed in, to notice an expired sign-in
         let briefs = (try? ingest.flush()) ?? []
         for id in briefs { Task { await queue.enqueueBrief(id, trigger: ("New Slack messages", "新的 Slack 消息")) } }
     }
 
-    private func triage() async { _ = try? await queue.triage(ingest) }
+    /// Retries after a failure wait 1, 2, 4 … up to 30 minutes.
+    func triage(force: Bool = false) async {
+        guard force || Date() >= nextTriage else { return }
+        do {
+            _ = try await queue.triage(ingest)
+            triageFailures = 0; triageError = nil; nextTriage = .distantPast
+        } catch {
+            triageFailures += 1
+            triageError = AppModel.explain(error)
+            nextTriage = Date().addingTimeInterval(min(60 * pow(2, Double(triageFailures - 1)), 1800))
+        }
+    }
+
+    static let authErrors: Set<String> = ["invalid_auth", "not_authed", "account_inactive", "token_revoked", "token_expired", "no_token"]
 
     private func checkSignedIn() {
         webView?.callAsyncJavaScript("return await window.__mos?.info();", arguments: [:], in: nil, in: .page) { [weak self] result in
@@ -83,11 +102,17 @@ final class SlackController: NSObject {
                 if case .success(let v) = result, let d = v as? [String: Any], let user = d["user_id"] as? String {
                     self.ingest.selfUserId = user
                     if let dm = d["self_dm"] as? String { self.ingest.selfDM = dm }
+                    if let g = d["groups"] as? [String] { self.ingest.selfGroups = Set(g) }
                     self.pollTodos()
                     self.team = d["team"] as? String ?? ""
                     self.status = .connected
                     self.signedIn = true
                     if self.shownForSignIn { self.window?.orderOut(nil); self.shownForSignIn = false } // signed in: keep running hidden
+                } else if self.signedIn {
+                    // Only a real auth error means the sign-in expired; a network error after sleep does not.
+                    if case .success(let v) = result, let d = v as? [String: Any], let err = d["error"] as? String, SlackController.authErrors.contains(err) {
+                        self.signedIn = false; self.status = .signedOut; self.shownForSignIn = true // the sidebar offers sign-in; no window pops up
+                    }
                 } else if self.status != .signedOut, self.webView?.url?.host?.contains("slack.com") == true, !(self.webView?.url?.path.hasPrefix("/client") ?? false) {
                     self.status = .signedOut
                     self.shownForSignIn = true
@@ -107,16 +132,22 @@ final class SlackController: NSObject {
         return msgs.map { b in
             SlackEvent(channel: b["channel"] as? String ?? channel, ts: b["ts"] as? String ?? "", threadTs: (b["thread_ts"] as? String).flatMap { $0.isEmpty ? nil : $0 },
                        user: b["user"] as? String ?? "", userName: b["user_name"] as? String ?? "", channelName: b["channel_name"] as? String ?? "",
-                       text: b["text"] as? String ?? "", isBot: b["bot"] as? Bool ?? false, permalink: b["permalink"] as? String)
+                       text: b["text"] as? String ?? "", isBot: b["bot"] as? Bool ?? false, permalink: b["permalink"] as? String,
+                       isDM: b["dm"] as? Bool ?? false, names: b["names"] as? [String: String] ?? [:])
         }
     }
 
     /// After a reconnect: fetch what arrived while the socket was down; replayed messages are de-duplicated by (channel, ts).
+    /// Known threads and DMs are read directly; new DMs and channel mentions come from the unread counts (or search).
     private func catchUp() {
         let c = ingest.catchUpTargets()
         let targets = (c.threads + c.dms).map { ["channel": $0.channel, "thread_ts": $0.threadTs ?? "", "oldest": $0.oldest] }
-        guard !targets.isEmpty else { return }
-        webView?.callAsyncJavaScript("return await window.__mos?.catchUp(targets);", arguments: ["targets": targets], in: nil, in: .page) { _ in }
+        let since = (try? ingest.store.read { try String.fetchOne($0, sql: "select max(ts) from slack_messages") }).flatMap { $0 }.flatMap(Double.init)
+            ?? Date().addingTimeInterval(-86400).timeIntervalSince1970
+        webView?.callAsyncJavaScript("return await window.__mos?.catchUp(targets, since, known, me);",
+                                     arguments: ["targets": targets, "since": since, "known": c.dms.map(\.channel), "me": ingest.selfUserId ?? ""], in: nil, in: .page) { r in
+            SlackController.log("catchUp -> \(r)")
+        }
     }
 
     /// Slack "Later" to-dos created since the last poll become To-sort items; the first poll only sets the starting point.
@@ -149,7 +180,8 @@ final class SlackController: NSObject {
             let e = SlackEvent(channel: ch, ts: ts, threadTs: (body["thread_ts"] as? String).flatMap { $0.isEmpty ? nil : $0 },
                                user: body["user"] as? String ?? "", userName: body["user_name"] as? String ?? "", channelName: body["channel_name"] as? String ?? "",
                                text: body["text"] as? String ?? "", subtype: body["subtype"] as? String, isBot: body["bot"] as? Bool ?? false,
-                               permalink: body["permalink"] as? String, edited: body["edited"] as? Bool ?? false, todo: body["todo"] as? Bool ?? false)
+                               permalink: body["permalink"] as? String, edited: body["edited"] as? Bool ?? false, todo: body["todo"] as? Bool ?? false,
+                               isDM: body["dm"] as? Bool ?? false, names: body["names"] as? [String: String] ?? [:])
             if (try? ingest.ingest(e)) != nil { received += 1; lastEventAt = Date() }
         default: break
         }
@@ -177,18 +209,30 @@ final class SlackController: NSObject {
         if (!users.has(id)) users.set(id, api('users.info', { user: id }).then((j) => j.user?.profile?.display_name || j.user?.real_name || j.user?.name || id));
         return users.get(id);
       }
-      async function chanName(id) {
-        if (!chans.has(id)) chans.set(id, api('conversations.info', { channel: id }).then(async (j) => j.channel?.is_im ? '' : (j.channel?.name || '')));
+      // { name, dm }: DMs and group DMs have no useful name.
+      async function chanInfo(id) {
+        if (!chans.has(id)) chans.set(id, api('conversations.info', { channel: id }).then((j) => {
+          const dm = !!(j.channel?.is_im || j.channel?.is_mpim);
+          return { name: dm ? '' : (j.channel?.name || ''), dm };
+        }));
         return chans.get(id);
       }
+      async function mentionNames(text) {
+        const out = {};
+        for (const m of String(text || '').matchAll(/<@([UW][A-Z0-9]+)(?:\|[^>]*)?>/g)) out[m[1]] = await userName(m[1]);
+        return out;
+      }
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       let last = 0;
       async function emit(m, channel, extra) {
         const now = Date.now(); if (now - last < 50) await new Promise((r) => setTimeout(r, 50)); last = Date.now();
         const team = cfg();
         const thread = m.thread_ts && m.thread_ts !== m.ts ? m.thread_ts : '';
         const permalink = team?.url ? `${team.url}archives/${channel}/p${String(m.ts).replace('.', '')}` + (thread ? `?thread_ts=${thread}&cid=${channel}` : '') : null;
+        const ch = await chanInfo(channel);
         post({ kind: 'message', channel, ts: m.ts, thread_ts: thread, user: m.user || '', bot: !!m.bot_id || m.subtype === 'bot_message',
-               subtype: m.subtype || null, text: m.text || '', user_name: await userName(m.user), channel_name: await chanName(channel), permalink, ...extra });
+               subtype: m.subtype || null, text: m.text || '', user_name: await userName(m.user), channel_name: ch.name, dm: ch.dm,
+               names: await mentionNames(m.text), permalink, ...extra });
       }
       const Orig = window.WebSocket;
       if (Orig) window.WebSocket = class extends Orig {
@@ -210,11 +254,13 @@ final class SlackController: NSObject {
       post({ kind: 'script_loaded', top: window === window.top, url: location.origin + location.pathname });
       window.__mos = {
         async info() {
-          const t = cfg(); if (!t?.token) return null;
+          const t = cfg(); if (!t?.token) return { error: 'no_token' };
           const j = await api('auth.test', {});
-          if (!j.ok) return null;
+          if (!j.ok) return { error: j.error || 'unknown' };
           const im = await api('conversations.open', { users: j.user_id, return_im: 'true' });
-          return { user_id: j.user_id, team: j.team, url: j.url, self_dm: im.channel?.id || null };
+          const ug = await api('usergroups.list', { include_users: 'true' });
+          const groups = (ug.usergroups || []).filter((g) => (g.users || []).includes(j.user_id)).map((g) => g.id);
+          return { user_id: j.user_id, team: j.team, url: j.url, self_dm: im.channel?.id || null, groups };
         },
         async thread(channel, ts) {
           const j = await api('conversations.replies', { channel, ts, limit: '200' });
@@ -223,8 +269,9 @@ final class SlackController: NSObject {
           for (const m of (j.messages || [])) {
             if (m.subtype && !['thread_broadcast', 'file_share', 'me_message', 'bot_message'].includes(m.subtype)) continue;
             const thread = m.thread_ts && m.thread_ts !== m.ts ? m.thread_ts : '';
+            const ch = await chanInfo(channel);
             out.push({ channel, ts: m.ts, thread_ts: thread, user: m.user || '', bot: !!m.bot_id, text: m.text || '',
-                       user_name: await userName(m.user), channel_name: await chanName(channel),
+                       user_name: await userName(m.user), channel_name: ch.name, dm: ch.dm, names: await mentionNames(m.text),
                        permalink: team?.url ? `${team.url}archives/${channel}/p${String(m.ts).replace('.', '')}` + (thread ? `?thread_ts=${thread}&cid=${channel}` : '') : null });
           }
           return { ok: true, messages: out };
@@ -242,14 +289,36 @@ final class SlackController: NSObject {
           }
           return max;
         },
-        async catchUp(targets) {
+        async catchUp(targets, since, known, me) {
           let n = 0;
+          // Up to 5 pages of 100 per conversation.
+          async function read(method, params, channel, skip) {
+            let cursor = '';
+            for (let page = 0; page < 5; page++) {
+              const j = await api(method, { ...params, limit: '100', ...(cursor ? { cursor } : {}) });
+              for (const m of (j.messages || [])) { if (m.ts === skip) continue; await emit(m, channel, { catchup: true }); n++; }
+              cursor = j.response_metadata?.next_cursor || '';
+              if (!j.has_more || !cursor) break;
+            }
+            await sleep(300);
+          }
           for (const t of targets) {
-            const j = t.thread_ts
-              ? await api('conversations.replies', { channel: t.channel, ts: t.thread_ts, oldest: t.oldest, limit: '50' })
-              : await api('conversations.history', { channel: t.channel, oldest: t.oldest, limit: '50' });
-            for (const m of (j.messages || [])) { if (m.ts === t.oldest) continue; await emit(m, t.channel, { catchup: true }); n++; }
-            await new Promise((r) => setTimeout(r, 300));
+            if (t.thread_ts) await read('conversations.replies', { channel: t.channel, ts: t.thread_ts, oldest: t.oldest }, t.channel, t.oldest);
+            else await read('conversations.history', { channel: t.channel, oldest: t.oldest }, t.channel, t.oldest);
+          }
+          // Not covered above: DMs from people she has not talked to in the app yet, and new mentions in channels.
+          const c = await api('client.counts', { thread_counts_by_channel: 'true' });
+          if (c.ok) {
+            const more = [...(c.ims || []), ...(c.mpims || [])].filter((x) => +x.latest > since && !known.includes(x.id)).map((x) => x.id)
+              .concat((c.channels || []).filter((x) => x.mention_count > 0 && +x.latest > since).map((x) => x.id));
+            for (const ch of more) await read('conversations.history', { channel: ch, oldest: String(since) }, ch, '');
+          } else if (me) {
+            const s = await api('search.messages', { query: `<@${me}>`, sort: 'timestamp', sort_dir: 'desc', count: '50' });
+            for (const m of (s.messages?.matches || [])) {
+              if (!(+m.ts > since) || !m.channel?.id) continue;
+              const th = String(m.permalink || '').match(/thread_ts=([0-9.]+)/);
+              await emit({ ...m, thread_ts: th ? th[1] : undefined }, m.channel.id, { catchup: true }); n++;
+            }
           }
           return n;
         },

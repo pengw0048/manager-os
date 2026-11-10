@@ -31,7 +31,7 @@ public enum Catchup {
             guard let t = store.topic(id), t.mergedInto == nil, !t.isArchived else { return nil }
             return Item(topic: t, entries: entries, isNew: t.createdAt > since)
         }
-        return items.sorted { TopicOps.score(store, $0.topic) > TopicOps.score(store, $1.topic) }
+        return items.map { ($0, TopicOps.score(store, $0.topic)) }.sorted { $0.1 > $1.1 }.map(\.0)
     }
 
     public static func counts(_ store: Store, _ items: [Item], now: Date = Date()) -> Counts {

@@ -12,6 +12,10 @@ struct TopicRow: Identifiable, Hashable {
     var topic: Topic
     var score: Double
     var followupDue: Bool
+    /// The Settings → People entry the requester matched, if any (its weight is in the score).
+    var sender: Person? = nil
+    /// New Slack messages the summary has not covered yet (pending or failed refresh).
+    var hasNews = false
     var id: String { topic.id }
 }
 
@@ -43,8 +47,14 @@ final class AppModel {
     var autoSorted: [ToSortItem] = []
     var deleting: String?
     var showingSort = false
+    var showingCatchup = false
+    var catchup: Catchup.Pending?
+    /// Link sources being read right now.
+    var readingLinks = Set<String>()
+    /// Opens (or brings back) the main window; set by the window's content.
+    var openMain: (() -> Void)?
 
-    var lang: String = UserDefaults.standard.string(forKey: "lang") ?? "en" { didSet { UserDefaults.standard.set(lang, forKey: "lang") } }
+    var lang: String = UserDefaults.standard.string(forKey: "lang") ?? "zh" { didSet { UserDefaults.standard.set(lang, forKey: "lang") } }
     var page: Page = .topics
     var view: ListView = .needs
     var rows: [TopicRow] = []
@@ -87,7 +97,11 @@ final class AppModel {
         AppModel.shared = self
         if slackCtl.enabled { slackCtl.start() }
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in Task { @MainActor in self?.tick() } }
-        if Bundle.main.bundleIdentifier != nil { UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in } }
+        if Bundle.main.bundleIdentifier != nil {
+            UNUserNotificationCenter.current().delegate = NotificationDelegate.shared
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        }
+        tick()
     }
 
     func L(_ k: String) -> String { L10n.s[k].map { lang == "zh" ? $0.1 : $0.0 } ?? k }
@@ -104,13 +118,22 @@ final class AppModel {
     }
 
     func reload() {
-        let weights = Dictionary(store.people().map { ($0.name.lowercased(), $0.weight) }, uniquingKeysWith: max)
-        rows = store.topics().map { t in
-            let w = weights.first { !$0.key.isEmpty && t.requester.lowercased().contains($0.key) }?.value ?? 1
-            return TopicRow(topic: t, score: TopicOps.score(store, t, weight: w), followupDue: TopicOps.followupDue(t))
+        let ppl = store.people(), ids = TopicOps.slackIdsByName(store), all = store.topics()
+        let kids = Dictionary(grouping: all.filter { $0.parentId != nil }, by: { $0.parentId! })
+        let news = Set((try? store.read { try String.fetchAll($0, sql: """
+            select distinct t.id from topics t join timeline e on e.topic_id = t.id
+            where e.actor = 'slack' and e.kind = 'event' and t.last_brief_at is not null and e.at > t.last_brief_at
+            """) }) ?? [])
+        rows = all.map { t in
+            let p = TopicOps.person(ppl, requester: t.requester, slackIds: ids[t.requester.lowercased()] ?? [])
+            let u = TopicOps.effectiveUrgency(t, children: kids[t.id] ?? [])
+            return TopicRow(topic: t, score: TopicOps.score(store, t, weight: p?.weight ?? 1, urgency: u), followupDue: TopicOps.followupDue(t),
+                            sender: p, hasNews: news.contains(t.id))
         }
+        catchup = Catchup.pending(store)
+        if catchup == nil { showingCatchup = false }
         if let sel = selection, let t = store.topic(sel) { loadDetail(t.mergedInto ?? sel) }
-        else if selection == nil || store.topic(selection!) == nil { selection = visibleTop().first?.id; if let s = selection { loadDetail(s) } else { detail = nil } }
+        else if selection == nil || store.topic(selection!) == nil { selection = listItems().first?.row.id; if let s = selection { loadDetail(s) } else { detail = nil } }
         assistant = store.chat(of: nil)
         jobs = store.jobs()
         assistantBusy = jobs.contains { $0.kind == "assistant" && ($0.status == "queued" || $0.status == "running") }
@@ -130,7 +153,8 @@ final class AppModel {
                              timeline: store.timeline(of: t.id), chat: store.chat(of: t.id), jobs: store.jobs(of: t.id))
     }
 
-    func select(_ id: String) { page = .topics; tab = .brief; showingSort = false; loadDetail(id) }
+    func select(_ id: String) { page = .topics; tab = .brief; showingSort = false; showingCatchup = false; loadDetail(id) }
+    func row(_ id: String) -> TopicRow? { rows.first { $0.id == id } }
 
     func acceptSort(_ item: ToSortItem, topicId: String?, newTitle: String) {
         run {
@@ -143,7 +167,7 @@ final class AppModel {
 
     /// Moves a piece of context to another topic; both briefs refresh (the old one from a fresh session).
     func moveArtifact(_ artifactId: String, from: String, to: String) {
-        do { try TopicOps.moveArtifact(store, artifactId, from: from, to: to) } catch { flash("\(error)"); return }
+        do { try TopicOps.moveArtifact(store, artifactId, from: from, to: to) } catch { flash(describe(error)); return }
         flash(L("moved") + " → " + (store.topic(to).map(title) ?? ""))
         Task {
             await queue.enqueueBrief(to, trigger: ("Context moved here", "移入了资料"))
@@ -185,14 +209,25 @@ final class AppModel {
     }
     func count(_ v: ListView) -> Int { rows.filter { $0.topic.parentId == nil && matches($0, in: v) }.count }
 
-    /// Due reminders first, then by score.
-    func visibleTop() -> [TopicRow] { rows.filter { $0.topic.parentId == nil }.sorted { ($0.followupDue ? 1 : 0, $0.score) > ($1.followupDue ? 1 : 0, $1.score) } }
+    /// Top-level rows, highest score first.
+    func visibleTop() -> [TopicRow] { rows.filter { $0.topic.parentId == nil }.sorted { $0.score > $1.score } }
 
     var levels: [Level] = []
     func level(_ u: Urgency) -> Level { levels.first { $0.id == u.rawValue } ?? Level.defaults[u.rank] }
     func levelName(_ u: Urgency) -> String { let l = level(u); return pick(l.nameEn, l.nameZh) }
     func setReminder(_ id: String, _ iso: String?) { patch(id) { $0.remindAt = .some(iso) } }
     func saveLevel(_ l: Level) { run { try store.write { try l.save($0) } } }
+    /// Due reminders in their own section above the rest, so they do not push urgent new topics down.
+    func listSections() -> (due: [(row: TopicRow, child: Bool)], rest: [(row: TopicRow, child: Bool)]) {
+        let items = listItems()
+        var due: [(row: TopicRow, child: Bool)] = [], rest: [(row: TopicRow, child: Bool)] = [], inDue = false
+        for it in items {
+            if !it.child { inDue = it.row.followupDue && view != .done && view != .archived }
+            if inDue { due.append(it) } else { rest.append(it) }
+        }
+        return (due, rest)
+    }
+
     /// Top-level rows in view, each followed by its sub-topics.
     func listItems() -> [(row: TopicRow, child: Bool)] {
         var out: [(TopicRow, Bool)] = []
@@ -208,7 +243,31 @@ final class AppModel {
 
     // MARK: Actions
 
-    func run(_ f: () throws -> Void) { do { try f() } catch { flash("\(error)") } }
+    func run(_ f: () throws -> Void) { do { try f() } catch { flash(describe(error)) } }
+
+    func describe(_ e: Error) -> String {
+        switch e as? TopicError {
+        case .notFound: return L("e_notFound")
+        case .cycle: return L("e_cycle")
+        case .badMerge: return L("e_badMerge")
+        case nil: return pick(AppModel.explain(e), AppModel.explain(e, zh: true))
+        }
+    }
+
+    /// A Claude or job error in words she can act on.
+    static func explain(_ e: Any, zh: Bool = false) -> String {
+        let s = String(describing: e)
+        let l = s.lowercased()
+        if l.contains("spawn failed") || l.contains("no such file") || l.contains("env: claude") || l.contains("command not found") {
+            return zh ? "找不到 Claude Code（claude 命令）。请先安装，或设置 CLAUDE_BIN。" : "Claude Code (the claude command) was not found. Install it or set CLAUDE_BIN."
+        }
+        if l.contains("login") || l.contains("log in") || l.contains("authenticat") || l.contains("api key") || l.contains("oauth") {
+            return zh ? "Claude Code 没有登录。请在终端运行 claude 并登录。" : "Claude Code is not signed in. Run claude in Terminal and sign in."
+        }
+        if l.contains("timed out") { return zh ? "Claude 太久没有回应（超时）。" : "Claude took too long and was stopped (timeout)." }
+        if l.contains("unparseable") || l.contains("structured_output") { return zh ? "读不懂 Claude 的回答。" : "Claude's answer could not be read." }
+        return String(s.prefix(160))
+    }
     func flash(_ s: String) { toast = s; Task { try? await Task.sleep(nanoseconds: 3_500_000_000); if toast == s { toast = nil } } }
 
     func patch(_ id: String, _ build: (inout TopicPatch) -> Void) { var p = TopicPatch(); build(&p); run { try TopicOps.patch(store, id, p) } }
@@ -235,18 +294,25 @@ final class AppModel {
     let linkReader = LinkReader()
 
     /// Fill a link's context item, then refresh the brief: Slack links fetch and track the thread; other links are read as pages.
+    /// Slack links are only read through the Slack connection, never in the link reader (which would show Slack's sign-in).
     func readLink(topicId: String, artifactId: String, url: String, trigger: (String, String)) {
+        readingLinks.insert(artifactId)
         Task {
+            defer { readingLinks.remove(artifactId) }
             let slackLink = SlackIngest.parsePermalink(url)
             if slackLink != nil && slackCtl.enabled {
                 for _ in 0..<45 where !slackCtl.isConnected { try? await Task.sleep(nanoseconds: 1_000_000_000) } // Slack may still be starting
             }
-            if let p = slackLink, slackCtl.isConnected,
-               let events = await slackCtl.fetchThread(channel: p.channel, threadTs: p.threadTs), !events.isEmpty {
-                run { try slack.attachThread(topicId: topicId, artifactId: artifactId, events: events, threadKey: "\(p.channel):\(p.threadTs)") }
-                let place = events.first.map { $0.channelName.isEmpty ? "DM" : "#\($0.channelName)" } ?? "Slack"
-                run { try TopicOps.fillArtifact(store, topicId: topicId, artifactId: artifactId, title: "Slack thread · \(place)",
-                                                content: (store.artifacts(of: topicId).first { $0.id == artifactId }?.content) ?? "", ok: true) }
+            if let p = slackLink {
+                if slackCtl.isConnected, let events = await slackCtl.fetchThread(channel: p.channel, threadTs: p.threadTs), !events.isEmpty {
+                    run { try slack.attachThread(topicId: topicId, artifactId: artifactId, events: events, threadKey: "\(p.channel):\(p.threadTs)") }
+                    let place = events.first.map { $0.isDM ? "DM" : "#\($0.channelName)" } ?? "Slack"
+                    run { try TopicOps.fillArtifact(store, topicId: topicId, artifactId: artifactId, title: "Slack thread · \(place)",
+                                                    content: (store.artifacts(of: topicId).first { $0.id == artifactId }?.content) ?? "", ok: true) }
+                } else {
+                    let why = slackCtl.enabled ? ("Slack could not read the thread", "Slack 没能读取这个 thread") : ("Connect Slack in Settings to read Slack links", "请先在设置里连接 Slack，才能读取 Slack 链接")
+                    run { try TopicOps.fillArtifact(store, topicId: topicId, artifactId: artifactId, title: nil, content: "", ok: false, why: why) }
+                }
             } else if let u = URL(string: url), u.scheme?.hasPrefix("http") == true {
                 let r = await linkReader.read(u)
                 run { try TopicOps.fillArtifact(store, topicId: topicId, artifactId: artifactId, title: r.title, content: r.text, ok: r.ok) }
@@ -261,6 +327,10 @@ final class AppModel {
         guard !s.isEmpty else { flash(L("clipboardEmpty")); return }
         let isLink = !s.contains(" ") && !s.contains("\n") && (URL(string: s)?.scheme?.hasPrefix("http") ?? false)
         createTopic(title: "", text: isLink ? "" : s, url: isLink ? s : "", requester: "", parent: nil)
+    }
+    func retryLink(_ topicId: String, _ a: Artifact) {
+        guard let u = a.url else { return }
+        readLink(topicId: topicId, artifactId: a.id, url: u, trigger: ("You asked to read the link again", "你要求重新读取链接"))
     }
     func refreshBrief(_ id: String) { Task { await queue.enqueueBrief(id, trigger: ("You asked to refresh the brief", "你要求刷新简报")) } }
     func merge(_ id: String, into: String) { run { try TopicOps.merge(store, id, into: into) }; select(into); Task { await queue.enqueueBrief(into, trigger: ("Topics merged", "事项合并")) } }
@@ -281,7 +351,7 @@ final class AppModel {
         Task { await queue.enqueueAssistant(t, page: page, topicId: sel) }
     }
     func undo(_ chat: ChatRow, _ i: Int) { run { try queue.undo(chatId: chat.id!, index: i) } }
-    func confirm(_ chat: ChatRow, _ i: Int, _ ok: Bool) { Task { do { try await queue.confirm(chatId: chat.id!, index: i, ok: ok) } catch { flash("\(error)") } } }
+    func confirm(_ chat: ChatRow, _ i: Int, _ ok: Bool) { Task { do { try await queue.confirm(chatId: chat.id!, index: i, ok: ok) } catch { flash(describe(error)) } } }
 
     func runKeywordSearch() {
         aiAnswer = nil; aiError = nil
@@ -291,7 +361,7 @@ final class AppModel {
         let q = searchText.trimmingCharacters(in: .whitespaces); guard !q.isEmpty else { return }
         aiSearching = true; aiError = nil
         Task {
-            do { aiAnswer = try await queue.aiSearch(q, includeArchived: includeArchived) } catch { aiError = "\(error)" }
+            do { aiAnswer = try await queue.aiSearch(q, includeArchived: includeArchived) } catch { aiError = describe(error) }
             aiSearching = false
         }
     }
@@ -309,26 +379,82 @@ final class AppModel {
     }
 
     func tick() {
-        for r in TopicOps.tick(store) where r.level.notify != "none" {
-            let name = pick(r.level.nameEn, r.level.nameZh)
-            AppModel.notify("\(name) · \(L(r.repeated ? "stillOpen" : "reminder"))", title(r.topic), sound: r.level.notify == "interrupt")
+        let due = TopicOps.tick(store).filter { $0.level.notify != "none" || canInterrupt($0.topic) }
+        if due.count > 3 {
+            // After sleep many reminders come due at once: one notification with the count instead of one each.
+            AppModel.notify(L("remindersN").replacingOccurrences(of: "{n}", with: "\(due.count)"),
+                            due.prefix(4).map { title($0.topic) }.joined(separator: " · "), sound: due.contains { $0.level.notify == "interrupt" })
+        } else {
+            for r in due {
+                let name = pick(r.level.nameEn, r.level.nameZh), vip = canInterrupt(r.topic)
+                AppModel.notify("\(name) · \(L(r.repeated ? "stillOpen" : "reminder"))", title(r.topic), sound: r.level.notify == "interrupt" || vip,
+                                topicId: r.topic.id, timeSensitive: vip)
+            }
         }
+        if let kind = Catchup.tick(store), let p = Catchup.pending(store) {
+            let c = Catchup.counts(store, Catchup.changes(store, since: p.since))
+            AppModel.notify(L("cu_" + kind.rawValue), countsLine(c), sound: false, catchup: true)
+            Task { await queue.digestOverview(since: p.since) }
+        }
+        catchup = Catchup.pending(store)
     }
 
+    func countsLine(_ c: Catchup.Counts) -> String {
+        [("cu_changed", c.topics), ("cu_needs", c.needsMe), ("cu_reminders", c.remindersDue), ("cu_dueToday", c.dueToday)]
+            .map { L($0.0).replacingOccurrences(of: "{n}", with: "\($0.1)") }.joined(separator: " · ")
+    }
+
+    /// The requester may interrupt her (Settings → People → Can interrupt): always, or when the topic is due today.
+    func canInterrupt(_ t: Topic) -> Bool {
+        guard let p = row(t.id)?.sender ?? TopicOps.sender(store, t.requester) else { return false }
+        let dueToday = t.dueAt.flatMap(parseISO).map { Calendar.current.isDateInToday($0) } ?? false
+        return p.canInterrupt == "always" || (p.canInterrupt == "if_due_today" && dueToday)
+    }
+
+    /// A finished brief raised urgency to Now/Today, or new messages put the topic back on her.
     func alert(_ t: Topic, _ kind: BriefAlert) {
-        let l = level(t.urgency)
-        guard l.notify != "none" else { return }
-        AppModel.notify("\(pick(l.nameEn, l.nameZh)) · Manager OS", title(t), sound: l.notify == "interrupt")
+        if NSApp.isActive && selection == t.id { return } // she is looking at it
+        let u = t.aiUrgency == .P0 ? Urgency.P0 : t.urgency // escalation to P0 notifies even under a lower manual level
+        let l = level(u), vip = canInterrupt(t)
+        guard l.notify != "none" || vip else { return }
+        let head = kind == .backToHer ? L("n_backToHer") : L("n_raised").replacingOccurrences(of: "{level}", with: pick(l.nameEn, l.nameZh))
+        AppModel.notify(head, title(t), sound: l.notify == "interrupt" || vip, topicId: t.id, timeSensitive: vip || u == .P0)
     }
 
-    static func notify(_ title: String, _ body: String, sound: Bool = true) {
+    func openFromNotification(topic: String?, catchup: Bool) {
+        if let topic, store.topic(topic) != nil { select(topic) }
+        else if catchup, self.catchup != nil { page = .topics; showingSort = false; showingCatchup = true }
+        openMain?()
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    static func notify(_ title: String, _ body: String, sound: Bool = true, topicId: String? = nil, timeSensitive: Bool = false, catchup: Bool = false) {
         guard Bundle.main.bundleIdentifier != nil, ProcessInfo.processInfo.environment["MOS_NOTIFY"] != "0" else { return }
         let c = UNMutableNotificationContent(); c.title = title; c.body = String(body.prefix(200)); c.sound = sound ? .default : nil
+        var info: [String: Any] = [:]
+        if let topicId { info["topic"] = topicId }
+        if catchup { info["catchup"] = true }
+        c.userInfo = info
+        if timeSensitive { c.interruptionLevel = .timeSensitive }
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil))
     }
 
     /// Starts macOS Dictation in the focused text field.
     static func dictate() { NSApp.sendAction(Selector(("startDictation:")), to: nil, from: nil) }
+}
+
+/// Shows banners while the app is in front, and opens the topic (or the digest) when she clicks a notification.
+final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = NotificationDelegate()
+    func userNotificationCenter(_ c: UNUserNotificationCenter, willPresent n: UNNotification, withCompletionHandler done: @escaping (UNNotificationPresentationOptions) -> Void) {
+        done([.banner, .sound, .list])
+    }
+    func userNotificationCenter(_ c: UNUserNotificationCenter, didReceive r: UNNotificationResponse, withCompletionHandler done: @escaping () -> Void) {
+        let info = r.notification.request.content.userInfo
+        let topic = info["topic"] as? String, catchup = info["catchup"] as? Bool ?? false
+        DispatchQueue.main.async { MainActor.assumeIsolated { AppModel.shared?.openFromNotification(topic: topic, catchup: catchup) } }
+        done()
+    }
 }
 
 extension Urgency { @MainActor var color: Color { Color(hex: AppModel.shared?.level(self).color ?? Level.defaults[rank].color) } }

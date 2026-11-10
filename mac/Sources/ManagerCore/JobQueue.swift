@@ -211,6 +211,7 @@ public actor JobQueue {
             enqueueBrief(t.id, trigger: ("More updates arrived during the last run", "上次运行期间又有新内容"))
         }
         if after.urgency.rank < before.urgency.rank && after.urgency.rank <= Urgency.P1.rank { onAlert?(after, .raised) }
+        else if after.aiUrgency == .P0 && before.aiUrgency != .P0 && after.urgency != .P0 { onAlert?(after, .raised) } // P0 notifies even under a manual level
         else if after.status == .needsMe && before.status != .needsMe { onAlert?(after, .backToHer) }
     }
 

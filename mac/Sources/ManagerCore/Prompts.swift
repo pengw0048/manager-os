@@ -208,7 +208,7 @@ public enum Prompts {
     public static let searchTopicCap = 150
 
     public static func assistant(_ store: Store, message: String, page: String?, topicId: String?) -> String {
-        let all = store.activeTopics().filter { $0.status != .done }.sorted { TopicOps.score(store, $0) > TopicOps.score(store, $1) }
+        let all = store.activeTopics().filter { $0.status != .done }.map { ($0, TopicOps.score(store, $0)) }.sorted { $0.1 > $1.1 }.map(\.0)
         var rows = Array(all.prefix(assistantTopicCap))
         let open = topicId.flatMap(store.topic)
         if let open, !rows.contains(where: { $0.id == open.id }) { rows.insert(open, at: 0) }

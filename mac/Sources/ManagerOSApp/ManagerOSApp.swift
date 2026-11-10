@@ -69,6 +69,21 @@ enum TitlebarDoubleClick {
             }
             return
         }
+        if ProcessInfo.processInfo.environment["MOS_DEBUG_SETTINGS"] == "1" {
+            // The Settings scene cannot be opened from here, so host the same view in a plain window.
+            let w = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 760, height: 560), styleMask: [.titled], backing: .buffered, defer: false)
+            w.contentView = NSHostingView(rootView: SettingsView().environment(m)); w.makeKeyAndOrderFront(nil); await wait(2)
+            func scrolls(_ v: NSView) -> [NSScrollView] { (v as? NSScrollView).map { [$0] } ?? v.subviews.flatMap(scrolls) }
+            if let sv = w.contentView.flatMap(scrolls)?.max(by: { $0.frame.height < $1.frame.height }),
+               let doc = sv.documentView {
+                let h = doc.bounds.height, step = sv.contentView.bounds.height
+                var y: CGFloat = 0, i = 0
+                while y < h { sv.contentView.scroll(to: NSPoint(x: 0, y: y)); await wait(0.6); i += 1
+                    if let v = w.contentView, let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) { v.cacheDisplay(in: v.bounds, to: rep); try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "\(dir)/settings-\(i).png")) }
+                    y += step }
+            }
+            return
+        }
         if ProcessInfo.processInfo.environment["MOS_DEBUG_CLOSE"] == "1" { main()?.performClose(nil); await wait(2); print("[close] main=\(main() != nil)"); m.openMain?(); await wait(2); print("[reopen] main=\(main() != nil)"); fflush(stdout); return }
         if let link = ProcessInfo.processInfo.environment["MOS_DEBUG_LINK"] {
             m.createTopic(title: "", text: "", url: link, requester: "", parent: nil)

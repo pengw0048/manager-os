@@ -123,6 +123,10 @@ enum L10n {
         "details": ("Details", "详情"), "setDue": ("Set due date", "设置截止日期"), "clearDue": ("Clear", "清除"),
         "reading": ("Reading…", "读取中…"), "readFailed": ("Could not read", "读取失败"),
         "triageFailed": ("Could not sort automatically:", "自动归类失败："), "ignoredLabel": ("Ignored", "已忽略"),
-        "pickTopicShort": ("Choose…", "选择…"), "filterTopics": ("Filter topics", "筛选事项"),
+        "pickTopicShort": ("Choose…", "选择…"),
+        "lv_color": ("Color", "颜色"), "lv_nameEn": ("Name (English)", "名称（英文）"), "lv_nameZh": ("Name (Chinese)", "名称（中文）"),
+        "lv_focusHelp": ("For focus mode, which is not built yet; it has no effect now.", "给专注模式用的，专注模式还没做，现在不起作用。"),
+        "c_slack": ("Slack user ID or handle", "Slack 用户 ID 或 handle"), "c_namePh": ("Full name", "姓名"),
+        "c_notesPh": ("e.g. prefers short updates", "例如：喜欢简短的进展"), "filterTopics": ("Filter topics", "筛选事项"),
     ]
 }

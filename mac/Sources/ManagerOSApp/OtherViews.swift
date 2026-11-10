@@ -331,23 +331,51 @@ struct LevelRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(level.id).font(.caption.monospaced()).foregroundStyle(.secondary)
-                ColorPicker("", selection: Binding(get: { Color(hex: level.color) }, set: { level.color = $0.hex }), supportsOpacity: false).labelsHidden()
-                TextField("English", text: $level.nameEn).frame(width: 130)
-                TextField("中文", text: $level.nameZh).frame(width: 100)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .bottom, spacing: 12) {
+                Text(level.id).font(.callout.monospaced().weight(.semibold)).foregroundStyle(.secondary).frame(width: 26, alignment: .leading).padding(.bottom, 4)
+                Captioned(m.L("lv_color")) {
+                    ColorPicker("", selection: Binding(get: { Color(hex: level.color) }, set: { level.color = $0.hex }), supportsOpacity: false).labelsHidden()
+                }
+                Captioned(m.L("lv_nameEn")) { field("", $level.nameEn).frame(width: 140) }
+                Captioned(m.L("lv_nameZh")) { field("", $level.nameZh).frame(width: 110) }
+                Spacer()
+            }
+            Captioned(m.L("lv_desc")) { field("", $level.description) }
+            HStack(alignment: .bottom, spacing: 16) {
+                Captioned(m.L("lv_notify")) {
+                    Picker("", selection: $level.notify) { ForEach(["interrupt", "silent", "none"], id: \.self) { Text(m.L("n_" + $0)).tag($0) } }.labelsHidden().fixedSize()
+                }
+                Captioned(m.L("lv_first")) {
+                    Picker("", selection: $level.firstRemindMinutes) { ForEach(LevelRow.firstOptions, id: \.self) { Text(dur($0)).tag($0) } }.labelsHidden().fixedSize()
+                }
+                Captioned(m.L("lv_repeat")) {
+                    Picker("", selection: $level.repeatMinutes) { ForEach(LevelRow.repeatOptions, id: \.self) { Text($0 == 0 ? m.L("dur_none") : dur($0)).tag($0) } }.labelsHidden().fixedSize()
+                }
                 Spacer()
                 Toggle(m.L("lv_focus"), isOn: Binding(get: { level.breaksFocus == 1 }, set: { level.breaksFocus = $0 ? 1 : 0 }))
-            }
-            TextField(m.L("lv_desc"), text: $level.description)
-            HStack {
-                Picker(m.L("lv_notify"), selection: $level.notify) { ForEach(["interrupt", "silent", "none"], id: \.self) { Text(m.L("n_" + $0)).tag($0) } }
-                Picker(m.L("lv_first"), selection: $level.firstRemindMinutes) { ForEach(LevelRow.firstOptions, id: \.self) { Text(dur($0)).tag($0) } }
-                Picker(m.L("lv_repeat"), selection: $level.repeatMinutes) { ForEach(LevelRow.repeatOptions, id: \.self) { Text($0 == 0 ? m.L("dur_none") : dur($0)).tag($0) } }
+                    .toggleStyle(.checkbox).help(m.L("lv_focusHelp")).padding(.bottom, 3)
             }
         }
+        .padding(.vertical, 6)
         .onChange(of: level) { m.saveLevel(level) }
+    }
+
+    func field(_ prompt: String, _ text: Binding<String>) -> some View {
+        TextField("", text: text, prompt: Text(prompt)).labelsHidden().textFieldStyle(.roundedBorder)
+    }
+}
+
+/// A small caption above a control, so every field says what it is (grouped forms otherwise right-align values away from labels).
+struct Captioned<Content: View>: View {
+    let caption: String
+    @ViewBuilder let content: Content
+    init(_ caption: String, @ViewBuilder content: () -> Content) { self.caption = caption; self.content = content() }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(caption).font(.caption).foregroundStyle(.secondary)
+            content
+        }
     }
 }
 
@@ -379,7 +407,7 @@ struct SlackSettings: View {
                 Button(m.L("readerOpen")) { m.linkReader.showForSignIn() }
             }
             Toggle(m.L("autoSortSetting"), isOn: Binding(get: { m.store.setting("auto_sort") != "0" }, set: { m.store.setSetting("auto_sort", $0 ? "1" : "0") }))
-            TextField(m.L("slackWatched"), text: $watched).onSubmit { m.slack.setWatched(watched) }
+            Captioned(m.L("slackWatched")) { TextField("", text: $watched, prompt: Text("eng-oncall, #incidents")).labelsHidden().textFieldStyle(.roundedBorder) }.onSubmit { m.slack.setWatched(watched) }
                 .onChange(of: watched) { m.slack.setWatched(watched) }
         } header: { Text(m.L("s_slack")) }
         .onAppear { watched = m.store.setting("slack_watched") ?? "" }
@@ -391,22 +419,33 @@ struct PersonRow: View {
     @State var person: Person
     let relationships: [String], interrupts: [String]
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                TextField(m.L("c_name"), text: $person.name)
-                Picker("", selection: $person.relationship) { ForEach(relationships, id: \.self) { Text(m.L("r_" + $0)).tag($0) } }.labelsHidden().frame(width: 130)
-                TextField(m.L("c_weight"), value: $person.weight, format: .number).frame(width: 50)
-                Picker("", selection: $person.canInterrupt) { ForEach(interrupts, id: \.self) { Text(m.L("i_" + $0)).tag($0) } }.labelsHidden().frame(width: 120)
-                Button { m.deletePerson(person.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .bottom, spacing: 12) {
+                Captioned(m.L("c_name")) { field(m.L("c_namePh"), $person.name) }
+                Captioned(m.L("c_rel")) {
+                    Picker("", selection: $person.relationship) { ForEach(relationships, id: \.self) { Text(m.L("r_" + $0)).tag($0) } }.labelsHidden().fixedSize()
+                }
+                Captioned(m.L("c_weight")) {
+                    TextField("", value: $person.weight, format: .number).labelsHidden().textFieldStyle(.roundedBorder).frame(width: 56).help(m.L("weightHelp"))
+                }
+                Captioned(m.L("c_int")) {
+                    Picker("", selection: $person.canInterrupt) { ForEach(interrupts, id: \.self) { Text(m.L("i_" + $0)).tag($0) } }.labelsHidden().fixedSize()
+                }
+                Button { m.deletePerson(person.id) } label: { Image(systemName: "trash") }.buttonStyle(.borderless).help(m.L("deleteBtn")).padding(.bottom, 4)
             }
-            HStack {
-                TextField("Slack", text: $person.slack)
-                TextField(m.L("c_email"), text: $person.email)
-                TextField(m.L("c_zoom"), text: $person.zoom)
+            HStack(alignment: .bottom, spacing: 12) {
+                Captioned(m.L("c_slack")) { field("U012AB3CD / @handle", $person.slack) }
+                Captioned(m.L("c_email")) { field("name@company.com", $person.email) }
+                Captioned(m.L("c_zoom")) { field("", $person.zoom) }
             }
-            TextField(m.L("c_notes"), text: $person.notes)
+            Captioned(m.L("c_notes")) { field(m.L("c_notesPh"), $person.notes) }
         }
+        .padding(.vertical, 6)
         .onChange(of: person) { m.savePerson(person) }
+    }
+
+    func field(_ prompt: String, _ text: Binding<String>) -> some View {
+        TextField("", text: text, prompt: Text(prompt)).labelsHidden().textFieldStyle(.roundedBorder)
     }
 }
 
@@ -424,12 +463,16 @@ struct ModelRow: View {
                 Text(m.L("d_" + kind)).font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
-            Picker("", selection: $model) { ForEach(Array(Set(ModelRow.models + [model])).sorted(), id: \.self) { Text($0.capitalized).tag($0) } }
-                .labelsHidden().frame(width: 110)
-                .onChange(of: model) { if model != m.queue.model(kind) { m.store.setSetting("model_\(kind)", model) } }
-            Picker(m.L("effort"), selection: $effort) { ForEach(["low", "medium", "high"], id: \.self) { Text(m.L("e_" + $0)).tag($0) } }
-                .frame(width: 150)
-                .onChange(of: effort) { if effort != m.queue.effort(kind) { m.store.setSetting("effort_\(kind)", effort) } }
+            Captioned(m.L("c_model")) {
+                Picker("", selection: $model) { ForEach(Array(Set(ModelRow.models + [model])).sorted(), id: \.self) { Text($0.capitalized).tag($0) } }
+                    .labelsHidden().fixedSize()
+                    .onChange(of: model) { if model != m.queue.model(kind) { m.store.setSetting("model_\(kind)", model) } }
+            }.frame(width: 120, alignment: .leading)
+            Captioned(m.L("effort")) {
+                Picker("", selection: $effort) { ForEach(["low", "medium", "high"], id: \.self) { Text(m.L("e_" + $0)).tag($0) } }
+                    .labelsHidden().fixedSize()
+                    .onChange(of: effort) { if effort != m.queue.effort(kind) { m.store.setSetting("effort_\(kind)", effort) } }
+            }.frame(width: 110, alignment: .leading)
         }
         .onAppear { model = m.queue.model(kind); effort = m.queue.effort(kind) ?? "low" }
     }

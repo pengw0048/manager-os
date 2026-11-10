@@ -657,6 +657,8 @@ M0 is useful on day one before any source integration exists.
   reminder in two working days when none is set. `done` applies automatically too (her decision): a wrong
   `done` hides the topic until the next message, which runs the judgment again. Every automatic change is
   on the timeline with its reason. A row shows a dot while new replies are not yet in the summary.
+  Her own top-level reply in a DM joins the newest open topic of that DM (done and archived topics are
+  skipped), so replying normally in a DM can move a topic to `waiting`.
 - **Notifications.** Besides reminders: a brief that raises urgency to Now or Today, a topic that comes back
   to her after a reply, and escalation to P0 even under a lower manual level. Titles use her level names and
   the app language; clicking opens the topic; banners show while the app is in front. After sleep, more than

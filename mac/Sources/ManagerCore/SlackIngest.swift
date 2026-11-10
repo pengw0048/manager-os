@@ -147,6 +147,20 @@ public final class SlackIngest: @unchecked Sendable {
         return cur
     }
 
+    /// The topic whose conversation in this DM had the latest message; archived and done topics are skipped.
+    func newestDMTopic(_ db: Database, channel: String) throws -> (String, Topic)? {
+        let keys = try String.fetchAll(db, sql: """
+            select st.thread_key from slack_threads st
+            where st.state = 'mapped' and st.thread_key like ?
+            order by (select max(m.ts) from slack_messages m where m.channel || ':' || coalesce(m.thread_ts, m.ts) = st.thread_key) desc
+            """, arguments: [channel + ":%"])
+        for key in keys {
+            let tid = try String.fetchOne(db, sql: "select topic_id from slack_threads where thread_key = ?", arguments: [key])
+            if let t = try liveTopic(db, tid), !t.isArchived, t.status != .done { return (key, t) }
+        }
+        return nil
+    }
+
     @discardableResult
     public func ingest(_ e: SlackEvent, now: Date = Date()) throws -> Outcome {
         let me = selfUserId, watched = self.watched, groups = selfGroups
@@ -183,6 +197,17 @@ public final class SlackIngest: @unchecked Sendable {
                 try t.update(db)
                 touched.append(t.id)
                 return mine ? .mine : .stored(topicId: t.id)
+            }
+            // Her top-level reply in a DM joins the newest open topic of that DM, so the reply can move its status.
+            if mine && e.isDM && e.threadTs == nil, let (key, topic) = try newestDMTopic(db, channel: e.channel) {
+                let artifact = try String.fetchOne(db, sql: "select artifact_id from slack_threads where thread_key = ?", arguments: [key])
+                msg.topicId = topic.id
+                try msg.insert(db)
+                try db.execute(sql: "insert into slack_threads(thread_key, topic_id, state, artifact_id) values (?, ?, 'mapped', ?) on conflict(thread_key) do update set topic_id = excluded.topic_id, state = 'mapped', artifact_id = excluded.artifact_id",
+                               arguments: [e.threadKey, topic.id, artifact])
+                try db.execute(sql: "update topics set last_activity_at = ? where id = ?", arguments: [isoNow, topic.id])
+                touched.append(topic.id)
+                return .mine
             }
             if mine {
                 msg.flushed = 1

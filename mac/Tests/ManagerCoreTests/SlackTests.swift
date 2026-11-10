@@ -300,5 +300,23 @@ import GRDB
         await e.queue.enqueueBrief(t, trigger: ("filed", "filed")); await e.queue.idle()
         #expect(e.store.topic(t)?.status == .needsMe)
     }
+
+    @Test func herTopLevelDMReplyMovesTheNewestTopicToWaiting() async throws {
+        let (e, s) = try setup()
+        guard case .toSort(let a) = try s.ingest(ev("D1", "1.0", text: "can you send the plan?")) else { return }
+        let t = try s.accept(a, topicId: nil, newTitle: "Plan")
+        await e.queue.enqueueBrief(t, trigger: ("t", "t")); await e.queue.idle()
+        try TopicOps.patch(e.store, t, { var p = TopicPatch(); p.remindAt = .some(nil); return p }())
+        #expect(try s.ingest(ev("D1", "2.0", user: "U_ME", text: "STATUS:waiting asked Dan, will send Friday")) == .mine)
+        #expect(try s.flush(now: Date().addingTimeInterval(400)) == [t])
+        await e.queue.enqueueBrief(t, trigger: ("news", "news")); await e.queue.idle()
+        #expect(e.store.topic(t)?.status == .waiting)
+        #expect(e.store.artifacts(of: t).first { $0.type == "slack_thread" }?.content.contains("asked Dan") == true)
+        // A reply in her message's thread follows it to the topic.
+        #expect(try s.ingest(ev("D1", "2.1", thread: "2.0", text: "thanks")) == .stored(topicId: t))
+        // A DM with no topic stays just her message.
+        #expect(try s.ingest(ev("D7", "3.0", user: "U_ME", text: "hi")) == .mine)
+        #expect(try e.store.read { try String.fetchOne($0, sql: "select topic_id from slack_messages where ts = '3.0'") } == nil)
+    }
 }
 

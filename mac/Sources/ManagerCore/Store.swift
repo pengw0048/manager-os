@@ -7,7 +7,6 @@ public final class Store: @unchecked Sendable {
     private let lock = NSLock()
     private var _version = 0
     private var observers: [@Sendable () -> Void] = []
-    private var dirty = Set<String>()
 
     public var version: Int { lock.withLock { _version } }
 
@@ -37,6 +36,11 @@ public final class Store: @unchecked Sendable {
                 try db.execute(sql: "alter table to_sort add column artifact_id text")
                 try db.execute(sql: "alter table to_sort add column filed_by text")
             }
+            let msgCols = try Set(db.columns(in: "slack_messages").map(\.name))
+            if !msgCols.contains("dm") {
+                try db.execute(sql: "alter table slack_messages add column dm integer not null default 0")
+                try db.execute(sql: "update slack_messages set dm = 1 where channel like 'D%'")
+            }
             try db.execute(sql: "update levels set name_en = 'Now', name_zh = '立即' where id = 'P0' and name_en = 'Incident' and name_zh = '事故'")
             if try Int.fetchOne(db, sql: "select count(*) from levels") == 0 { for l in Level.defaults { try l.insert(db) } }
         }
@@ -46,15 +50,20 @@ public final class Store: @unchecked Sendable {
     public func onChange(_ f: @escaping @Sendable () -> Void) { lock.withLock { observers.append(f) } }
 
     public func changed(topics: [String?] = []) {
-        let fs: [@Sendable () -> Void] = lock.withLock {
-            _version += 1
-            for t in topics { if let t { dirty.insert(t) } }
-            return observers
-        }
+        let ids = topics.compactMap { $0 }
+        // Topics whose search rows need a rebuild; kept in the database so a restart does not lose them.
+        if !ids.isEmpty { try? db.write { db in for t in Set(ids) { try db.execute(sql: "insert or ignore into search_dirty(topic_id) values (?)", arguments: [t]) } } }
+        let fs: [@Sendable () -> Void] = lock.withLock { _version += 1; return observers }
         for f in fs { f() }
     }
 
-    func takeDirty() -> Set<String> { lock.withLock { let d = dirty; dirty = []; return d } }
+    func takeDirty() -> Set<String> {
+        (try? db.write { db -> Set<String> in
+            let ids = try String.fetchAll(db, sql: "select topic_id from search_dirty")
+            try db.execute(sql: "delete from search_dirty")
+            return Set(ids)
+        }) ?? []
+    }
 
     @discardableResult
     public func write<T>(topics: [String?] = [], _ f: (Database) throws -> T) throws -> T {
@@ -92,8 +101,10 @@ public final class Store: @unchecked Sendable {
     public func level(_ u: Urgency) -> Level { levels().first { $0.id == u.rawValue } ?? Level.defaults[u.rank] }
     public func people() -> [Person] { (try? read { try Person.fetchAll($0, sql: "select * from people order by weight desc, name") }) ?? [] }
     public func setting(_ key: String) -> String? { try? read { try String.fetchOne($0, sql: "select value from settings where key = ?", arguments: [key]) } }
-    public func setSetting(_ key: String, _ value: String) {
-        try? write { try $0.execute(sql: "insert into settings(key, value) values (?, ?) on conflict(key) do update set value = excluded.value", arguments: [key, value]) }
+    /// `quiet` skips the change notification (for bookkeeping values the UI does not show).
+    public func setSetting(_ key: String, _ value: String, quiet: Bool = false) {
+        let f = { (db: Database) in try db.execute(sql: "insert into settings(key, value) values (?, ?) on conflict(key) do update set value = excluded.value", arguments: [key, value]) }
+        if quiet { try? db.write(f) } else { try? write(f) }
     }
 
     // MARK: Inserts used across modules
@@ -164,7 +175,7 @@ public final class Store: @unchecked Sendable {
       channel text not null, ts text not null, thread_ts text, user text not null default '', user_name text not null default '',
       channel_name text not null default '', text text not null default '', subtype text, permalink text,
       received_at text not null, topic_id text, to_sort_id text, flushed integer not null default 0, mine integer not null default 0,
-      primary key(channel, ts)
+      dm integer not null default 0, primary key(channel, ts)
     );
     create table if not exists slack_threads(
       thread_key text primary key, topic_id text, state text not null default 'participated', artifact_id text
@@ -175,6 +186,8 @@ public final class Store: @unchecked Sendable {
       prefill_topic_id text, prefill_title_en text, prefill_title_zh text, prefill_reason_en text, prefill_reason_zh text, triaged_at text,
       created_at text not null, updated_at text not null
     );
+    create table if not exists search_dirty(topic_id text primary key);
+    create table if not exists slack_users(id text primary key, name text not null default '');
     create virtual table if not exists search_index using fts5(
       topic_id unindexed, kind unindexed, text unindexed, body, tokenize = 'unicode61 remove_diacritics 2'
     );

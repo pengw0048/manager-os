@@ -9,9 +9,9 @@ public struct AIConfig: Sendable {
         func v(_ k: String, _ d: String) -> String { env[k].flatMap { $0.isEmpty ? nil : $0 } ?? d }
         return AIConfig(
             model: ["brief": v("MOS_MODEL_BRIEF", "sonnet"), "chat": v("MOS_MODEL_CHAT", "sonnet"), "assistant": v("MOS_MODEL_ASSISTANT", "sonnet"),
-                    "search": v("MOS_MODEL_SEARCH", "haiku"), "triage": v("MOS_MODEL_TRIAGE", "haiku")],
+                    "search": v("MOS_MODEL_SEARCH", "haiku"), "triage": v("MOS_MODEL_TRIAGE", "haiku"), "digest": v("MOS_MODEL_DIGEST", "sonnet")],
             effort: ["brief": v("MOS_EFFORT_BRIEF", "low"), "chat": v("MOS_EFFORT_CHAT", "medium"), "assistant": v("MOS_EFFORT_ASSISTANT", "low"),
-                     "search": v("MOS_EFFORT_SEARCH", "low"), "triage": v("MOS_EFFORT_TRIAGE", "low")])
+                     "search": v("MOS_EFFORT_SEARCH", "low"), "triage": v("MOS_EFFORT_TRIAGE", "low"), "digest": v("MOS_EFFORT_DIGEST", "low")])
     }
 }
 
@@ -43,7 +43,7 @@ public actor JobQueue {
     var triageRunning = false
     var onAlert: (@Sendable (Topic, BriefAlert) -> Void)?
 
-    public static let kinds = ["brief", "chat", "assistant", "search", "triage"]
+    public static let kinds = ["brief", "chat", "assistant", "search", "triage", "digest"]
     /// Model and effort per feature: Settings override the defaults (which come from the environment).
     public nonisolated func model(_ kind: String) -> String {
         store.setting("model_\(kind)").flatMap { $0.isEmpty ? nil : $0 } ?? config.model[kind] ?? "sonnet"
@@ -359,6 +359,24 @@ public actor JobQueue {
         } catch {
             try? store.write { try $0.execute(sql: "update jobs set status = 'error', error = ?, finished_at = ? where id = ?", arguments: [String(describing: error), nowISO(), job.id]) }
             throw error
+        }
+    }
+
+    /// The short AI overview at the top of a digest: one call, no session. On failure the digest shows its cards alone.
+    public func digestOverview(since: String) async {
+        let items = Catchup.changes(store, since: since)
+        guard !items.isEmpty else { return }
+        var job = Job(kind: "digest", topicId: nil, trigger: ("Digest overview (\(items.count) topics)", "摘要概览（\(items.count) 个事项）"), model: model("digest"))
+        job.status = "running"; job.startedAt = nowISO()
+        try? store.write { try job.insert($0) }
+        do {
+            let r = try await runner.run(ClaudeRequest(cwd: home, prompt: Catchup.overviewPrompt(store, items, since: since), schema: Catchup.overviewSchema,
+                                                     model: job.model, effort: effort("digest"), systemPrompt: Catchup.overviewSystem, persist: false))
+            try store.write { try finish($0, job, r, topicId: nil) }
+            store.setSetting("catchup_overview_since", since)
+            store.setSetting("catchup_overview", r.structured["overview"] as? String ?? "")
+        } catch {
+            try? store.write { try $0.execute(sql: "update jobs set status = 'error', error = ?, finished_at = ? where id = ?", arguments: [String(describing: error), nowISO(), job.id]) }
         }
     }
 

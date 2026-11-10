@@ -43,7 +43,7 @@ struct SortCard: View {
                 if let p = item.permalink, let u = URL(string: p) { Link("\(m.L("openSlack")) ↗", destination: u).font(.caption) }
             }
             VStack(alignment: .leading, spacing: 4) {
-                ForEach(msgs.suffix(6), id: \.ts) { msg in Text(msg.line).font(.callout).textSelection(.enabled) }
+                ForEach(msgs.suffix(6), id: \.ts) { msg in Text(msg.line(m.slackNames)).font(.callout).textSelection(.enabled) }
                 if msgs.count > 6 { Text("+\(msgs.count - 6)").font(.caption).foregroundStyle(.secondary) }
             }
             .padding(10).frame(maxWidth: .infinity, alignment: .leading)

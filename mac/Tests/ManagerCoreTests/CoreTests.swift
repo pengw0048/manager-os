@@ -297,4 +297,58 @@ struct Env {
         #expect(e.store.jobs().first?.kind == "search")
         #expect(e.calls.last.flatMap { ($0["args"] as? [String])?.contains("--no-session-persistence") } == true)
     }
+
+    @Test func searchIndexSurvivesARestart() throws {
+        let e = try Env()
+        let t = try TopicOps.create(e.store, title: "Budget")
+        _ = try Search.keyword(e.store, "budget")
+        _ = try TopicOps.addContext(e.store, topicId: t.id, title: "", url: "", content: "headcount 预算")
+        let reopened = try Store(path: "\(e.home)/data/manager.db")
+        #expect(try Search.keyword(reopened, "headcount").map(\.topicId) == [t.id])
+    }
+
+    @Test func manualUrgencyHoldsThroughItsLastDay() throws {
+        let e = try Env()
+        var t = Topic(title: "pin"); t.urgency = .P3; t.urgencySource = "manual"; t.urgencyPinnedUntil = localDay(); t.aiUrgency = .P1
+        try e.store.write { try t.insert($0) }
+        _ = TopicOps.tick(e.store)
+        #expect(e.store.topic(t.id)?.urgencySource == "manual")
+        _ = TopicOps.tick(e.store, now: Date().addingTimeInterval(86400))
+        #expect(e.store.topic(t.id)?.urgencySource == "auto")
+    }
+
+    @Test func parentScoresAtLeastAsUrgentAsOpenChildren() throws {
+        var p = Topic(title: "parent"); p.urgency = .P3
+        var c = Topic(title: "child", parentId: p.id); c.urgency = .P0
+        #expect(TopicOps.effectiveUrgency(p, children: [c]) == .P0)
+        c.status = .done
+        #expect(TopicOps.effectiveUrgency(p, children: [c]) == .P3)
+        p.status = .needsMe
+    }
+
+    @Test func awaySummaryAndDigests() async throws {
+        let e = try Env()
+        let cal = Calendar.current
+        // A weekday at 08:00, then 09:05 the same day.
+        var day = cal.date(bySettingHour: 8, minute: 0, second: 0, of: Date())!
+        while cal.isDateInWeekend(day) { day = cal.date(byAdding: .day, value: 1, to: day)! }
+        let iso = { (d: Date) in ISO8601DateFormatter.mos.string(from: d) }
+        #expect(Catchup.tick(e.store, now: day) == nil) // first run only sets the start
+        #expect(Catchup.pending(e.store) == nil)
+        let t = try TopicOps.create(e.store, title: "Reply came")
+        var msg = TimelineEntry(topicId: t.id, actor: "slack", en: "1 new Slack message in DM", raw: "Bob: done?"); msg.at = iso(day.addingTimeInterval(1800))
+        var mine = TimelineEntry(topicId: t.id, actor: "me", kind: "note", en: "my note"); mine.at = iso(day.addingTimeInterval(1900))
+        try e.store.write { try Store.addTimeline($0, msg); try Store.addTimeline($0, mine) }
+        let later = day.addingTimeInterval(65 * 60)
+        #expect(Catchup.tick(e.store, now: later) == .morning)
+        let p = try #require(Catchup.pending(e.store))
+        #expect(p.kind == .morning && p.since == iso(day)) // the away start is kept
+        let items = Catchup.changes(e.store, since: p.since)
+        #expect(items.map(\.id) == [t.id] && items[0].entries.count == 1)
+        #expect(Catchup.tick(e.store, now: later.addingTimeInterval(60)) == nil) // fires once
+        await e.queue.digestOverview(since: p.since)
+        #expect(e.store.setting("catchup_overview") == "- 概览")
+        Catchup.markRead(e.store)
+        #expect(Catchup.pending(e.store) == nil)
+    }
 }

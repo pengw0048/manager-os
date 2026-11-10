@@ -39,6 +39,7 @@ final class AppModel {
     let slack: SlackIngest
     let slackCtl: SlackController
     var toSort: [ToSortItem] = []
+    var slackNames: [String: String] = [:]
     var autoSorted: [ToSortItem] = []
     var deleting: String?
     var showingSort = false
@@ -116,6 +117,7 @@ final class AppModel {
         people = store.people()
         levels = store.levels()
         toSort = slack.pendingItems()
+        slackNames = slack.userNames()
         autoSorted = slack.recentAuto()
         if toSort.isEmpty && autoSorted.isEmpty { showingSort = false }
         if !searchText.isEmpty { runKeywordSearch() }

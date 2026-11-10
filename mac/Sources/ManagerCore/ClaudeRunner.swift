@@ -54,7 +54,8 @@ public struct ClaudeRunner: Sendable {
         if let s = r.resume { args += ["--resume", s] }
         if !r.persist { args.append("--no-session-persistence") }
 
-        let (out, err, _) = try await ClaudeRunner.exec(binary, args, cwd: r.cwd, stdin: r.prompt, timeout: r.timeout)
+        let (out, err, _, timedOut) = try await ClaudeRunner.exec(binary, args, cwd: r.cwd, stdin: r.prompt, timeout: r.timeout)
+        if timedOut { throw ClaudeError(message: "timed out after \(Int(r.timeout / 60)) min") }
         let notFound = (err + out).range(of: "no conversation found|session.*not found", options: [.regularExpression, .caseInsensitive]) != nil
         guard let parsed = try? JSONSerialization.jsonObject(with: Data(out.utf8)) else {
             throw ClaudeError(message: notFound ? "session not found" : "unparseable output: \(String((err.isEmpty ? out : err).prefix(300)))", sessionNotFound: notFound)
@@ -87,7 +88,7 @@ public struct ClaudeRunner: Sendable {
         return d
     }
 
-    static func exec(_ bin: String, _ args: [String], cwd: String, stdin: String, timeout: TimeInterval) async throws -> (String, String, Int32) {
+    static func exec(_ bin: String, _ args: [String], cwd: String, stdin: String, timeout: TimeInterval) async throws -> (String, String, Int32, Bool) {
         try await withCheckedThrowingContinuation { cont in
             let p = Process()
             if bin.contains("/") { p.executableURL = URL(fileURLWithPath: bin); p.arguments = args }
@@ -99,19 +100,19 @@ public struct ClaudeRunner: Sendable {
             p.environment = env
             let inPipe = Pipe(), outPipe = Pipe(), errPipe = Pipe()
             p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = errPipe
-            let outBuf = LockedData(), errBuf = LockedData()
+            let outBuf = LockedData(), errBuf = LockedData(), killed = LockedData()
             outPipe.fileHandleForReading.readabilityHandler = { h in outBuf.append(h.availableData) }
             errPipe.fileHandleForReading.readabilityHandler = { h in errBuf.append(h.availableData) }
             let timer = DispatchSource.makeTimerSource()
             timer.schedule(deadline: .now() + timeout)
-            timer.setEventHandler { if p.isRunning { p.terminate() } }
+            timer.setEventHandler { if p.isRunning { killed.append(Data([1])); p.terminate() } }
             p.terminationHandler = { proc in
                 timer.cancel()
                 outPipe.fileHandleForReading.readabilityHandler = nil
                 errPipe.fileHandleForReading.readabilityHandler = nil
                 outBuf.append(outPipe.fileHandleForReading.readDataToEndOfFile())
                 errBuf.append(errPipe.fileHandleForReading.readDataToEndOfFile())
-                cont.resume(returning: (outBuf.string, errBuf.string, proc.terminationStatus))
+                cont.resume(returning: (outBuf.string, errBuf.string, proc.terminationStatus, !killed.string.isEmpty))
             }
             do { try p.run() } catch { cont.resume(throwing: ClaudeError(message: "spawn failed: \(error)")); return }
             timer.resume()

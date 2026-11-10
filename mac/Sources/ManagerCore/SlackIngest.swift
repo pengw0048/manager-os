@@ -17,12 +17,17 @@ public struct SlackEvent: Sendable, Equatable {
     public var edited: Bool
     /// She marked this message as a to-do in Slack ("Later"); kept like a mention, even if hers or a bot's.
     public var todo: Bool
+    /// A direct or group direct message (the page reports group DMs; "D…" channels are always DMs).
+    public var isDM: Bool
+    /// Display names of users mentioned in the text, by user ID.
+    public var names: [String: String]
 
     public init(channel: String, ts: String, threadTs: String? = nil, user: String, userName: String = "", channelName: String = "",
-                text: String, subtype: String? = nil, isBot: Bool = false, permalink: String? = nil, edited: Bool = false, todo: Bool = false) {
+                text: String, subtype: String? = nil, isBot: Bool = false, permalink: String? = nil, edited: Bool = false, todo: Bool = false,
+                isDM: Bool = false, names: [String: String] = [:]) {
         self.channel = channel; self.ts = ts; self.threadTs = threadTs == ts ? nil : threadTs; self.user = user; self.userName = userName
         self.channelName = channelName; self.text = text; self.subtype = subtype; self.isBot = isBot; self.permalink = permalink; self.edited = edited
-        self.todo = todo
+        self.todo = todo; self.isDM = isDM || channel.hasPrefix("D"); self.names = names
     }
     public var threadKey: String { "\(channel):\(threadTs ?? ts)" }
 }
@@ -71,12 +76,14 @@ public struct SlackMessage: Codable, Hashable, Sendable, FetchableRecord, Persis
     public var toSortId: String?
     public var flushed: Int
     public var mine: Int
+    public var dm: Int = 0
     public var threadKey: String { "\(channel):\(threadTs ?? ts)" }
-    /// "HH:mm Name: text" in local time, from the Slack ts.
-    public var line: String {
+    public var place: String { dm == 1 ? "DM" : "#\(channelName.isEmpty ? channel : channelName)" }
+    /// "MM-dd HH:mm Name: text" in local time, from the Slack ts, with Slack markup turned into plain text.
+    public func line(_ names: [String: String] = [:]) -> String {
         let d = Date(timeIntervalSince1970: Double(ts) ?? 0)
         let f = DateFormatter(); f.dateFormat = "MM-dd HH:mm"
-        return "\(f.string(from: d)) \(userName.isEmpty ? user : userName): \(text)"
+        return "\(f.string(from: d)) \(userName.isEmpty ? user : userName): \(SlackText.clean(text, names: names))"
     }
 }
 
@@ -88,6 +95,7 @@ public final class SlackIngest: @unchecked Sendable {
     private var _selfUserId: String?
     private var _watched: Set<String> = []
     private var _selfDM: String?
+    private var _selfGroups: Set<String> = []
 
     public static let keptSubtypes: Set<String?> = [nil, "thread_broadcast", "file_share", "me_message"]
     public static let dmGroupWindow: TimeInterval = 30 * 60
@@ -97,6 +105,21 @@ public final class SlackIngest: @unchecked Sendable {
         _selfUserId = store.setting("slack_self_user_id")
         _watched = SlackIngest.parseWatched(store.setting("slack_watched") ?? "")
         _selfDM = store.setting("slack_self_dm")
+        _selfGroups = Set((store.setting("slack_self_groups") ?? "").split(separator: ",").map(String.init))
+    }
+
+    /// User groups she belongs to; a mention of the group counts as a mention of her.
+    public var selfGroups: Set<String> {
+        get { lock.withLock { _selfGroups } }
+        set { lock.withLock { _selfGroups = newValue }; store.setSetting("slack_self_groups", newValue.sorted().joined(separator: ","), quiet: true) }
+    }
+
+    /// Display names by Slack user ID, for turning `<@U…>` into names.
+    public func userNames() -> [String: String] { SlackIngest.names(nil, store) }
+    static func names(_ db: Database?, _ store: Store) -> [String: String] {
+        let q = { (db: Database) in try Row.fetchAll(db, sql: "select id, name from slack_users where name != ''") }
+        let rows = (db.map { try? q($0) } ?? (try? store.read(q))) ?? []
+        return Dictionary(rows.map { ($0["id"] as String, $0["name"] as String) }, uniquingKeysWith: { a, _ in a })
     }
 
     public var selfUserId: String? {
@@ -126,7 +149,7 @@ public final class SlackIngest: @unchecked Sendable {
 
     @discardableResult
     public func ingest(_ e: SlackEvent, now: Date = Date()) throws -> Outcome {
-        let me = selfUserId, watched = self.watched
+        let me = selfUserId, watched = self.watched, groups = selfGroups
         let note = selfDM.map { e.channel == $0 } ?? false
         let isoNow = ISO8601DateFormatter.mos.string(from: now)
         var touched: [String?] = []
@@ -134,6 +157,9 @@ public final class SlackIngest: @unchecked Sendable {
             if e.edited {
                 try db.execute(sql: "update slack_messages set text = ? where channel = ? and ts = ?", arguments: [e.text, e.channel, e.ts])
                 return db.changesCount > 0 ? .updated : .dropped("unknown edit")
+            }
+            for (id, name) in e.names.merging([e.user: e.userName], uniquingKeysWith: { a, _ in a }) where !id.isEmpty && !name.isEmpty && name != id {
+                try db.execute(sql: "insert into slack_users(id, name) values (?, ?) on conflict(id) do update set name = excluded.name", arguments: [id, name])
             }
             if let old = try SlackMessage.fetchOne(db, key: ["channel": e.channel, "ts": e.ts]) {
                 // A to-do on a message stored only as her own reply still needs a place.
@@ -150,7 +176,7 @@ public final class SlackIngest: @unchecked Sendable {
 
             var msg = SlackMessage(channel: e.channel, ts: e.ts, threadTs: e.threadTs, user: e.user, userName: e.userName, channelName: e.channelName,
                                    text: e.text, subtype: e.subtype, permalink: e.permalink, receivedAt: isoNow, topicId: mapped?.id, toSortId: nil,
-                                   flushed: 0, mine: mine ? 1 : 0)
+                                   flushed: 0, mine: mine ? 1 : 0, dm: e.isDM ? 1 : 0)
             if var t = mapped {
                 try msg.insert(db)
                 t.lastActivityAt = isoNow; t.archivedAt = nil
@@ -165,8 +191,8 @@ public final class SlackIngest: @unchecked Sendable {
                 return .mine
             }
 
-            let isDM = e.channel.hasPrefix("D") || note
-            let mention = me.map { e.text.contains("<@\($0)>") } ?? false
+            let isDM = e.isDM || note
+            let mention = (me.map { e.text.contains("<@\($0)>") } ?? false) || groups.contains { e.text.contains("<!subteam^\($0)") }
             let participated = state == "participated"
             let isWatched = watched.contains(e.channel.lowercased()) || (!e.channelName.isEmpty && watched.contains(e.channelName.lowercased()))
             guard e.todo || isDM || mention || participated || isWatched else { return .dropped("not for me") }
@@ -218,14 +244,15 @@ public final class SlackIngest: @unchecked Sendable {
                     try db.execute(sql: "update slack_messages set flushed = 1 where topic_id = ?", arguments: [topicId]); return false
                 }
                 let fromOthers = msgs.filter { $0.mine == 0 }
-                let place = msgs.first.map { $0.channel.hasPrefix("D") ? "DM" : "#\($0.channelName.isEmpty ? $0.channel : $0.channelName)" } ?? "Slack"
+                let place = msgs.first?.place ?? "Slack"
+                let names = SlackIngest.names(db, store)
                 let (en, zh) = fromOthers.isEmpty
                     ? ("You replied in \(place)", "你在 \(place) 回复了")
                     : ("\(fromOthers.count) new Slack message\(fromOthers.count == 1 ? "" : "s") in \(place)", "\(place) 有 \(fromOthers.count) 条新 Slack 消息")
                 try Store.addTimeline(db, TimelineEntry(topicId: target.id, actor: "slack", kind: "event", en: en, zh: zh,
-                                                        sourceUrl: msgs.last?.permalink, raw: msgs.map(\.line).joined(separator: "\n")))
+                                                        sourceUrl: msgs.last?.permalink, raw: msgs.map { $0.line(names) }.joined(separator: "\n")))
                 for key in Set(msgs.map(\.threadKey)) {
-                    let lines = msgs.filter { $0.threadKey == key }.map(\.line).joined(separator: "\n")
+                    let lines = msgs.filter { $0.threadKey == key }.map { $0.line(names) }.joined(separator: "\n")
                     if let aid = try String.fetchOne(db, sql: "select artifact_id from slack_threads where thread_key = ?", arguments: [key]) {
                         try db.execute(sql: "update artifacts set content = content || char(10) || ?, summary_en = '', summary_zh = '' where id = ?", arguments: [lines, aid])
                     }
@@ -258,16 +285,26 @@ public final class SlackIngest: @unchecked Sendable {
             if auto, let zh = newTitleZh, !zh.isEmpty { t.titleZh = zh; try store.write(topics: [t.id]) { try t.update($0) } }
             target = t.id
         }
-        let place = item.channel.hasPrefix("D") ? "DM" : "#\(item.channelName.isEmpty ? item.channel : item.channelName)"
-        let lines = msgs.map(\.line).joined(separator: "\n")
+        let dm = msgs.first?.dm == 1 || item.source == "dm" || item.source == "note"
+        let place = dm ? "DM" : "#\(item.channelName.isEmpty ? item.channel : item.channelName)"
+        let names = userNames()
+        let lines = msgs.map { $0.line(names) }.joined(separator: "\n")
         try store.write(topics: [target]) { db in
+            // A later DM with the same person joins the conversation already on the topic instead of adding a new source.
+            let existing = dm ? try String.fetchOne(db, sql: """
+                select st.artifact_id from slack_threads st join topic_artifacts ta on ta.artifact_id = st.artifact_id and ta.topic_id = ?
+                where st.topic_id = ? and st.thread_key like ? and st.state = 'mapped' limit 1
+                """, arguments: [target, target, item.channel + ":%"]) : nil
             let art = Artifact(type: "slack_thread", title: "Slack · \(item.title)", url: item.permalink, content: lines)
-            try Store.insertArtifact(db, topicId: target, art)
+            if let existing {
+                try db.execute(sql: "update artifacts set content = content || char(10) || ?, summary_en = '', summary_zh = '' where id = ?", arguments: [lines, existing])
+            } else { try Store.insertArtifact(db, topicId: target, art) }
+            let aid = existing ?? art.id
             for key in Set(msgs.map(\.threadKey) + [item.threadKey]) {
                 try db.execute(sql: """
                     insert into slack_threads(thread_key, topic_id, state, artifact_id) values (?, ?, 'mapped', ?)
                     on conflict(thread_key) do update set topic_id = excluded.topic_id, state = 'mapped', artifact_id = excluded.artifact_id
-                    """, arguments: [key, target, art.id])
+                    """, arguments: [key, target, aid])
             }
             try db.execute(sql: "update slack_messages set topic_id = ?, flushed = 1 where to_sort_id = ?", arguments: [target, itemId])
             try Store.addTimeline(db, TimelineEntry(topicId: target, actor: "slack", kind: "context",
@@ -276,7 +313,7 @@ public final class SlackIngest: @unchecked Sendable {
                 sourceUrl: item.permalink, raw: lines))
             try db.execute(sql: "update topics set last_activity_at = ?, archived_at = null where id = ?", arguments: [nowISO(), target])
             try db.execute(sql: "update to_sort set status = 'accepted', updated_at = ?, filed_topic_id = ?, artifact_id = ?, filed_by = ? where id = ?",
-                           arguments: [nowISO(), target, art.id, auto ? "auto" : "me", itemId])
+                           arguments: [nowISO(), target, aid, auto ? "auto" : "me", itemId])
         }
         return target
     }
@@ -286,15 +323,22 @@ public final class SlackIngest: @unchecked Sendable {
         try store.write { try $0.execute(sql: "update to_sort set status = 'skipped', updated_at = ? where id = ? and status = 'pending'", arguments: [nowISO(), itemId]) }
     }
 
-    /// A skipped item goes back to "To sort".
+    /// A skipped or ignored item goes back to "To sort"; an ignored item's threads are no longer silenced.
     public func restore(_ itemId: String) throws {
-        try store.write { try $0.execute(sql: "update to_sort set status = 'pending', updated_at = ? where id = ? and status = 'skipped'", arguments: [nowISO(), itemId]) }
+        let keys = Set(messages(of: itemId).map(\.threadKey))
+        try store.write { db in
+            guard try String.fetchOne(db, sql: "select status from to_sort where id = ?", arguments: [itemId]) == "ignored" else {
+                try db.execute(sql: "update to_sort set status = 'pending', updated_at = ? where id = ? and status = 'skipped'", arguments: [nowISO(), itemId]); return
+            }
+            for key in keys { try db.execute(sql: "delete from slack_threads where thread_key = ? and state = 'ignored'", arguments: [key]) }
+            try db.execute(sql: "update to_sort set status = 'pending', updated_at = ? where id = ?", arguments: [nowISO(), itemId])
+        }
     }
 
-    /// Items filed or skipped automatically in the last `hours`, newest first, so she can check them.
+    /// Items filed or skipped automatically, or ignored by her, in the last `hours`, newest first, so she can check or undo them.
     public func recentAuto(hours: Double = 24, now: Date = Date()) -> [ToSortItem] {
         let since = ISO8601DateFormatter.mos.string(from: now.addingTimeInterval(-hours * 3600))
-        return (try? store.read { try ToSortItem.fetchAll($0, sql: "select * from to_sort where (filed_by = 'auto' or status = 'skipped') and updated_at >= ? order by updated_at desc", arguments: [since]) }) ?? []
+        return (try? store.read { try ToSortItem.fetchAll($0, sql: "select * from to_sort where (filed_by = 'auto' or status in ('skipped','ignored')) and updated_at >= ? order by updated_at desc", arguments: [since]) }) ?? []
     }
 
     /// Dismiss an item; later replies in its threads are ignored too.
@@ -341,11 +385,15 @@ public final class SlackIngest: @unchecked Sendable {
             for e in events {
                 let m = SlackMessage(channel: e.channel, ts: e.ts, threadTs: e.threadTs, user: e.user, userName: e.userName, channelName: e.channelName,
                                      text: e.text, subtype: e.subtype, permalink: e.permalink, receivedAt: isoNow, topicId: topicId, toSortId: nil,
-                                     flushed: 1, mine: me != nil && e.user == me ? 1 : 0)
+                                     flushed: 1, mine: me != nil && e.user == me ? 1 : 0, dm: e.isDM ? 1 : 0)
                 try m.insert(db, onConflict: .ignore)
+                for (id, name) in e.names.merging([e.user: e.userName], uniquingKeysWith: { a, _ in a }) where !id.isEmpty && !name.isEmpty && name != id {
+                    try db.execute(sql: "insert into slack_users(id, name) values (?, ?) on conflict(id) do update set name = excluded.name", arguments: [id, name])
+                }
             }
+            let names = SlackIngest.names(db, store)
             let lines = events.map { SlackMessage(channel: $0.channel, ts: $0.ts, threadTs: nil, user: $0.user, userName: $0.userName, channelName: "", text: $0.text,
-                                                  subtype: nil, permalink: nil, receivedAt: isoNow, topicId: nil, toSortId: nil, flushed: 1, mine: 0).line }
+                                                  subtype: nil, permalink: nil, receivedAt: isoNow, topicId: nil, toSortId: nil, flushed: 1, mine: 0).line(names) }
             try db.execute(sql: "update artifacts set content = ?, summary_en = '', summary_zh = '' where id = ?", arguments: [lines.joined(separator: "\n"), artifactId])
             try db.execute(sql: """
                 insert into slack_threads(thread_key, topic_id, state, artifact_id) values (?, ?, 'mapped', ?)
@@ -377,9 +425,51 @@ public final class SlackIngest: @unchecked Sendable {
             guard parts.count == 2 else { return nil }
             return .init(channel: parts[0], threadTs: parts[1], oldest: (r["last"] as String?) ?? parts[1])
         }
-        let dms = ((try? store.read { try Row.fetchAll($0, sql: "select channel, max(ts) as last from slack_messages where channel like 'D%' group by channel") }) ?? [])
+        let dms = ((try? store.read { try Row.fetchAll($0, sql: "select channel, max(ts) as last from slack_messages where dm = 1 group by channel") }) ?? [])
             .map { CatchUp.Target(channel: $0["channel"], threadTs: nil, oldest: $0["last"]) }
         return CatchUp(threads: threads, dms: dms)
+    }
+}
+
+/// Slack's message markup (`<@U1>`, `<url|label>`, `<#C1|name>`, `<!here>`, `:emoji:`, `&amp;`) as plain text.
+/// Mention detection reads the raw text; this runs only for what she reads and what Claude gets.
+public enum SlackText {
+    static let tag = try! NSRegularExpression(pattern: "<([^<>]+)>")
+    static let shortcode = try! NSRegularExpression(pattern: ":([a-z0-9_+\\-]+):")
+    static let emoji: [String: String] = [
+        "+1": "👍", "thumbsup": "👍", "-1": "👎", "thumbsdown": "👎", "white_check_mark": "✅", "heavy_check_mark": "✔️", "x": "❌",
+        "eyes": "👀", "pray": "🙏", "tada": "🎉", "fire": "🔥", "rocket": "🚀", "joy": "😂", "smile": "😄", "slightly_smiling_face": "🙂",
+        "sweat_smile": "😅", "thinking_face": "🤔", "heart": "❤️", "100": "💯", "warning": "⚠️", "raised_hands": "🙌", "clap": "👏",
+        "sob": "😭", "wave": "👋", "ok_hand": "👌", "point_up": "☝️", "bulb": "💡", "rotating_light": "🚨", "memo": "📝", "question": "❓",
+    ]
+
+    public static func clean(_ s: String, names: [String: String] = [:]) -> String {
+        let ns = s as NSString
+        var out = "", last = 0
+        for m in tag.matches(in: s, range: NSRange(location: 0, length: ns.length)) {
+            out += ns.substring(with: NSRange(location: last, length: m.range.location - last))
+            let inner = ns.substring(with: m.range(at: 1))
+            let parts = inner.split(separator: "|", maxSplits: 1).map(String.init)
+            let head = parts[0], label = parts.count > 1 ? parts[1] : nil
+            if head.hasPrefix("@") { let id = String(head.dropFirst()); out += "@" + (label ?? names[id] ?? id) }
+            else if head.hasPrefix("#") { out += "#" + (label ?? String(head.dropFirst())) }
+            else if head.hasPrefix("!subteam^") { out += label.map { $0.hasPrefix("@") ? $0 : "@" + $0 } ?? "@group" }
+            else if head.hasPrefix("!date^") { out += label ?? "" }
+            else if head.hasPrefix("!") { out += "@" + head.dropFirst() }
+            else { out += label.map { $0 == head ? head : "\($0) (\(head))" } ?? head }
+            last = m.range.location + m.range.length
+        }
+        out += ns.substring(from: last)
+        let ons = out as NSString
+        var res = "", at = 0
+        for m in shortcode.matches(in: out, range: NSRange(location: 0, length: ons.length)) {
+            res += ons.substring(with: NSRange(location: at, length: m.range.location - at))
+            let code = ons.substring(with: m.range(at: 1))
+            res += emoji[code] ?? ons.substring(with: m.range)
+            at = m.range.location + m.range.length
+        }
+        res += ons.substring(from: at)
+        return res.replacingOccurrences(of: "&lt;", with: "<").replacingOccurrences(of: "&gt;", with: ">").replacingOccurrences(of: "&amp;", with: "&")
     }
 }
 

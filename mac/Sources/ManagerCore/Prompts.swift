@@ -60,8 +60,9 @@ public enum Prompts {
 
     public static func triage(_ store: Store, items: [(ToSortItem, [SlackMessage])]) -> String {
         let topics = store.activeTopics().filter { $0.status != .done }.sorted { $0.lastActivityAt > $1.lastActivityAt }.prefix(assistantTopicCap)
+        let names = SlackIngest.names(nil, store)
         let itemText = items.map { it, msgs in
-            "### Item \(it.id) (\(it.source), \(it.title))\n" + clip(msgs.map(\.line).joined(separator: "\n"), 1500)
+            "### Item \(it.id) (\(it.source), \(it.title))\n" + clip(msgs.map { $0.line(names) }.joined(separator: "\n"), 1500)
         }.joined(separator: "\n\n")
         return "Today: \(localDay())\n\n## Open topics\n" + (topics.isEmpty ? "(none)" : topics.map { topicLine(store, $0) }.joined(separator: "\n"))
             + "\n\n## New Slack conversations\n" + itemText

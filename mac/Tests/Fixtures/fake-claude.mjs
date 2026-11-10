@@ -31,6 +31,8 @@ process.stdin.on('end', () => {
       const action = /thanks/i.test(body) ? 'skip' : i === 0 && topic ? 'existing' : 'new';
       return { item_id: id, action, topic_id: action === 'existing' ? topic : '', title_en: `New ${i}`, title_zh: `新 ${i}`, reason: '理由' };
     }) };
+  } else if (props.includes('overview')) {
+    out = { overview: '- 概览' };
   } else if (props.includes('hits')) {
     const sys = arg('--system-prompt') || '';
     const q = prompt.replace(/^Query:\s*/, '').trim().toLowerCase();

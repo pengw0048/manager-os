@@ -36,14 +36,33 @@ private let statusLabel: [TopicStatus: (String, String)] = [
 ]
 
 public enum TopicOps {
-    public static func senderWeight(_ store: Store, _ requester: String) -> Double {
-        let r = requester.lowercased()
-        guard !r.isEmpty else { return 1 }
-        return store.people().first { !$0.name.isEmpty && (r == $0.name.lowercased() || r.contains($0.name.lowercased())) }?.weight ?? 1
+    /// The person a topic's requester is: by Slack user ID or handle (Settings → People → Slack), else by name.
+    /// `slackIds` are the Slack user IDs known for the requester's display name. `people` is sorted by weight.
+    public static func person(_ people: [Person], requester: String, slackIds: Set<String> = []) -> Person? {
+        let norm = { (s: String) in s.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "@ ")) }
+        let r = norm(requester), ids = Set(slackIds.map(norm))
+        guard !r.isEmpty || !ids.isEmpty else { return nil }
+        if let p = people.first(where: { let h = norm($0.slack); return !h.isEmpty && (h == r || ids.contains(h)) }) { return p }
+        return people.first { let n = norm($0.name); return !n.isEmpty && !r.isEmpty && (r == n || r.contains(n)) }
     }
 
-    /// score = sender_weight × urgency_weight × deadline_factor × staleness_factor
-    public static func score(_ store: Store, _ t: Topic, now: Date = Date(), weight: Double? = nil) -> Double {
+    /// Slack user IDs per lowercased display name, from messages the app has seen.
+    public static func slackIdsByName(_ store: Store) -> [String: Set<String>] {
+        let rows = (try? store.read { try Row.fetchAll($0, sql: "select id, name from slack_users where name != ''") }) ?? []
+        var out: [String: Set<String>] = [:]
+        for r in rows { out[(r["name"] as String).lowercased(), default: []].insert(r["id"]) }
+        return out
+    }
+
+    public static func sender(_ store: Store, _ requester: String) -> Person? {
+        person(store.people(), requester: requester, slackIds: slackIdsByName(store)[requester.lowercased()] ?? [])
+    }
+
+    public static func senderWeight(_ store: Store, _ requester: String) -> Double { sender(store, requester)?.weight ?? 1 }
+
+    /// score = sender_weight × urgency_weight × deadline_factor × staleness_factor.
+    /// `urgency` overrides the topic's own level (a parent counts at least as urgent as its open sub-topics).
+    public static func score(_ store: Store, _ t: Topic, now: Date = Date(), weight: Double? = nil, urgency: Urgency? = nil) -> Double {
         var deadline = 1.0
         if let due = t.dueAt.flatMap(parseISO) {
             let hours = due.timeIntervalSince(now) / 3600
@@ -51,7 +70,7 @@ public enum TopicOps {
         }
         var stale = 1.0
         if t.status == .needsMe, let last = parseISO(t.lastActivityAt) { stale = 1 + min(now.timeIntervalSince(last) / 86400, 3) * 0.25 }
-        let s = (weight ?? senderWeight(store, t.requester)) * t.urgency.weight * deadline * stale
+        let s = (weight ?? senderWeight(store, t.requester)) * (urgency ?? t.urgency).weight * deadline * stale
         return (s * 100).rounded() / 100
     }
 
@@ -84,8 +103,8 @@ public enum TopicOps {
     }
 
     /// Parent urgency is at least the highest urgency of its open sub-topics.
-    public static func effectiveUrgency(_ store: Store, _ t: Topic) -> Urgency {
-        ([t.urgency] + store.children(t.id).filter { $0.status != .done }.map(\.urgency)).min { $0.rank < $1.rank }!
+    public static func effectiveUrgency(_ t: Topic, children: [Topic]) -> Urgency {
+        ([t.urgency] + children.filter { $0.status != .done && !$0.isArchived }.map(\.urgency)).min { $0.rank < $1.rank }!
     }
 
     public static func addWorkingDays(_ n: Int, from: Date = Date()) -> String {
@@ -338,7 +357,8 @@ public enum TopicOps {
         let levels = Dictionary(uniqueKeysWithValues: store.levels().map { ($0.id, $0) })
         for var t in store.activeTopics() {
             var changed = false
-            if t.urgencySource == "manual", let pin = t.urgencyPinnedUntil, !pin.isEmpty, pin <= day {
+            // "Manual until <day>" holds through that day.
+            if t.urgencySource == "manual", let pin = t.urgencyPinnedUntil, !pin.isEmpty, pin.prefix(10) < day {
                 t.urgencySource = "auto"; t.urgencyPinnedUntil = nil; t.urgency = t.aiUrgency ?? t.urgency; changed = true
             }
             if reminderDue(t, now: now) {

@@ -236,4 +236,56 @@ import GRDB
         #expect(!TopicOps.hasSlackNews(e.store, t.id, after: nil, until: "2030-01-01T11:00:00.000Z"))
         #expect(!TopicOps.hasSlackNews(e.store, t.id, after: "2030-01-01T09:00:00.000Z", until: "2030-01-01T09:59:00.000Z"))
     }
+
+    @Test func slackMarkupBecomesPlainText() {
+        let names = ["U1": "Alice"]
+        #expect(SlackText.clean("hi <@U1> and <@U2|bob>", names: names) == "hi @Alice and @bob")
+        #expect(SlackText.clean("see <https://x.io/a|the doc> or <https://y.io>") == "see the doc (https://x.io/a) or https://y.io")
+        #expect(SlackText.clean("<#C1|eng> <!here> <!subteam^S1|@sre> :+1: :custom: a &amp; b &lt;3") == "#eng @here @sre 👍 :custom: a & b <3")
+    }
+
+    @Test func groupDMsUserGroupsAndNamesInLines() throws {
+        let (e, s) = try setup()
+        var g = ev("G1", "5.0", text: "can you two decide?"); g.isDM = true
+        guard case .toSort(let item) = try s.ingest(g) else { Issue.record("group DM should go to To sort"); return }
+        #expect(try e.store.read { try ToSortItem.fetchOne($0, key: item) }?.source == "dm")
+        #expect(s.catchUpTargets().dms.contains { $0.channel == "G1" })
+        s.selfGroups = ["S_SRE"]
+        if case .toSort = try s.ingest(ev("C5", "5.1", text: "<!subteam^S_SRE|@sre> please look")) {} else { Issue.record("her user group counts as a mention") }
+        var m = ev("C6", "5.2", user: "U_CAROL", text: "<@U_ME> ping <@U_DAN>"); m.userName = "Carol"; m.names = ["U_DAN": "Dan"]
+        guard case .toSort(let it2) = try s.ingest(m) else { return }
+        let t = try s.accept(it2, topicId: nil, newTitle: "Ping")
+        #expect(e.store.artifacts(of: t).first?.content.contains("Carol: @U_ME ping @Dan") == true)
+    }
+
+    @Test func laterDMJoinsTheSameSourceAndIgnoreCanBeUndone() throws {
+        let (e, s) = try setup()
+        let now = Date()
+        guard case .toSort(let a) = try s.ingest(ev("D1", "1.0", text: "first ask"), now: now) else { return }
+        let t = try s.accept(a, topicId: nil, newTitle: "Ask")
+        guard case .toSort(let b) = try s.ingest(ev("D1", "2.0", text: "second ask"), now: now.addingTimeInterval(7200)) else { return }
+        try s.accept(b, topicId: t)
+        let arts = e.store.artifacts(of: t).filter { $0.type == "slack_thread" }
+        #expect(arts.count == 1 && arts[0].content.contains("first ask") && arts[0].content.contains("second ask"))
+        #expect(try s.ingest(ev("D1", "2.1", thread: "2.0", text: "reply")) == .stored(topicId: t))
+
+        guard case .toSort(let c) = try s.ingest(ev("C3", "7.0", text: "<@U_ME> fyi")) else { return }
+        try s.ignore(c)
+        #expect(s.recentAuto().contains { $0.id == c && $0.status == "ignored" })
+        try s.restore(c)
+        #expect(s.pendingItems().contains { $0.id == c })
+        #expect(try s.ingest(ev("C3", "7.1", thread: "7.0", text: "<@U_ME> more")) == .toSort(c))
+    }
+
+    @Test func requesterMatchesBySlackIdOrHandle() throws {
+        let (e, s) = try setup()
+        var boss = Person(name: "Robert Smith", relationship: "manager", weight: 3); boss.slack = "U_BOB"
+        var peer = Person(name: "Pat", weight: 1.5); peer.slack = "@pat.k"
+        try e.store.write { try boss.insert($0); try peer.insert($0) }
+        _ = try s.ingest(ev("D9", "1.0", text: "hi"))   // Slack display name "Bob" for U_BOB
+        #expect(TopicOps.sender(e.store, "Bob")?.id == boss.id)
+        #expect(TopicOps.senderWeight(e.store, "pat.k") == 1.5)
+        #expect(TopicOps.senderWeight(e.store, "Robert Smith (PM)") == 3)
+        #expect(TopicOps.senderWeight(e.store, "Someone") == 1)
+    }
 }

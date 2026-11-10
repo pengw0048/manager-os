@@ -201,14 +201,16 @@ write tool can be turned off in Settings.
 
 | `propose_knowledge(file, line, source_topic_id)` | write, suggestion only | on |
 
-Background jobs have no tools for merge, split, status changes, or sending messages. The
-assistant (§6c) has more tools, but only acts after she confirms each write.
+Background jobs have no tools for merge, split, or sending messages. The brief job does return
+the status (`needs_me` / `waiting` / `done`) with a reason, and the app applies it when new Slack
+messages arrived (§7f). The assistant (§6c) has more tools, but only acts after she confirms each write.
 
 ## 6a. UI
 
-- Layout: topic list on the left, selected topic on the right (mail-client style). A view
-  selector at the top of the list (Needs me / Waiting / Follow-up due / All / Done) and a
-  "To sort" entry with a count.
+- Layout: topic list on the left, selected topic on the right (mail-client style). The views
+  (Needs me / Waiting / Reminders due / All / Done / Archived) sit as small rows with counts at the
+  top of the list, then the away summary or digest entry (§7f) and a "To sort" entry with a count.
+  A line at the bottom shows whether Slack is connected and when the last message arrived.
 - Topic page: header (title, urgency control, status, follow-up date), sub-topics, then tabs:
   Brief / Context / Timeline / Claude. Merge, split, and move live in a "⋯" menu.
 
@@ -420,8 +422,8 @@ default tool set, about 31k (mostly cache reads after the first call). So the ap
 |-------|-----------|------|
 | New messages on a known topic | Topic job with all new messages since the last job | After 60 s with no new message on that topic, or at most 5 min after the first new message (P0 topics: 20 s / 2 min) |
 | Messages that match no topic | One triage call for the whole batch | Every 5 min, if the batch is not empty |
-| Bots, muted channels, her own messages | No AI; her own reply only updates `last_touched_by_me_at` and may clear `needs_me` | — |
-| P2/P3 topics | Brief updates are batched | Hourly, or when she opens the topic |
+| Bots, muted channels | No AI | — |
+| Her own reply on a known topic | Topic job, same debounce (her reply is what moves a topic to `waiting`) | As for new messages |
 | Transcript | Meeting job | Once, when the file appears |
 
 ### Session types
@@ -443,7 +445,8 @@ P1 > rest).
 
 Debounce decides *when* to call Claude; resuming decides *how*:
 
-1. Skip with a rule, no AI: emoji-only replies, "thanks", "+1", her own messages.
+1. Skip with a rule, no AI: bots and system messages. Her own replies and short acknowledgements
+   still reach the topic job, because they can change whose move it is (§7f).
 2. Otherwise resume the topic's session (`--resume <session_id>`) and send only the new
    messages since the last job. Earlier messages, artifacts, and the previous brief are already
    in the session, so Claude gets more context while the app sends fewer new tokens.
@@ -518,7 +521,8 @@ Prompt size limits, so nothing grows with the number of topics:
 Reminders replace follow-up dates:
 - "Remind me" quick picks: in 1 hour, in 3 hours, tomorrow 9:00, next Monday 9:00, or any date and time.
 - A reminder is only the first nudge. From its time until she handles it (Done, a new time, or Clear) the
-  topic stays at the top of the inbox with "N h overdue", whatever its status.
+  topic stays in a "Reminders due" section above the rest of the list with "N h overdue", whatever its
+  status. The rest of the list stays sorted by score, so a new urgent topic is not pushed under old reminders.
 - While unhandled, it repeats at its level's interval. Setting "Waiting on others" adds a reminder in two
   working days at 9:00. A new topic gets its level's first reminder automatically.
 
@@ -637,10 +641,39 @@ M0 is useful on day one before any source integration exists.
 - **Token use** (measured on the dev data before these changes: a brief was ~$0.10, of which ~60% output):
   - The CLI's default coding system prompt (~8.5k tokens per call) is replaced with a short one (`--system-prompt`).
   - Summaries are capped at about 180 words per language.
-  - New messages on P2/P3 topics only mark the summary stale; it refreshes when she opens the topic.
-    P0/P1 topics and new topics refresh at once.
+  - New messages refresh the summary at every level, after the debounce in §7a (changed 2026-11-10, §7f).
   - What she reads (summary, replies, answers, reasons) is written once, in Chinese; anything meant for other
     people (draft replies) is in English. Titles stay in both languages. A real brief after this: 702 output
     tokens, $0.014, 7.7 s.
 - **Models.** Settings → AI models sets the model and effort per feature (summary, ask, assistant, search, sorting).
   The Activity window (⌥⌘A) shows runs, tokens, and cost by feature and model.
+
+## 7f. Status from replies, notifications, digests (built 2026-11-10)
+
+- **Status follows the conversation.** Every new Slack message on a topic (hers included) runs the topic
+  job after the usual debounce. The resumed prompt carries the new messages' text. The brief returns
+  `status` (`needs_me` / `waiting` / `done`) and a reason; the app applies it only when the prompt saw
+  messages the previous brief did not, so a manual refresh never overrides her status. `waiting` adds a
+  reminder in two working days when none is set. `done` applies automatically too (her decision): a wrong
+  `done` hides the topic until the next message, which runs the judgment again. Every automatic change is
+  on the timeline with its reason. A row shows a dot while new replies are not yet in the summary.
+- **Notifications.** Besides reminders: a brief that raises urgency to Now or Today, a topic that comes back
+  to her after a reply, and escalation to P0 even under a lower manual level. Titles use her level names and
+  the app language; clicking opens the topic; banners show while the app is in front. After sleep, more than
+  three due reminders become one notification. A person marked "Can interrupt: always" (or "if due today" on a
+  topic due today) gets sound and time-sensitive delivery. "Breaks focus" waits for focus mode (not built).
+- **Sender weight** matches Settings → People by Slack user ID or handle first, then by name; the topic page
+  shows the weight in effect. A parent scores at least as urgent as its open sub-topics.
+- **"While you were away" and digests.** One view of what changed since a time, built from the timeline
+  without AI: topics with entries she did not write (Slack messages, automatic status and urgency changes,
+  conversations filed automatically), highest score first, new topics marked. It opens after 30 minutes
+  away (any day) and at the morning and evening digest times (weekdays; default 09:00 and 17:30, Settings →
+  Digests). A digest sends one silent notification with counts and opens with a short AI overview in
+  Simplified Chinese (job kind "digest", in Settings → AI models and Activity); if that call fails the cards
+  show alone. "Mark as read" closes it.
+- **Slack.** Group DMs count as DMs; a mention of one of her user groups counts as a mention (`@here` /
+  `@channel` do not). After a reconnect the app pages through known threads and DMs, then uses the unread
+  counts (`client.counts`, falling back to `search.messages`) for new DMs and channel mentions. The sign-in
+  is re-checked every 5 minutes; an expired sign-in shows in the sidebar line instead of opening a window.
+  Slack markup (`<@U…>`, links, `:emoji:`) is shown and sent to Claude as plain text.
+

@@ -20,7 +20,7 @@ open build/ManagerOS.app
 Or open `Package.swift` in Xcode and run the `ManagerOS` scheme.
 
 Environment variables (same as M0): `MANAGER_OS_HOME`, `CLAUDE_BIN`, `MOS_MODEL_*`, `MOS_EFFORT_*`
-(`BRIEF`, `CHAT`, `ASSISTANT`, `SEARCH`), `MOS_NOTIFY=0`.
+(`BRIEF`, `CHAT`, `ASSISTANT`, `SEARCH`, `TRIAGE`, `DIGEST`), `MOS_NOTIFY=0`.
 
 ## Layout
 
@@ -32,6 +32,7 @@ Environment variables (same as M0): `MANAGER_OS_HOME`, `CLAUDE_BIN`, `MOS_MODEL_
 | `Sources/ManagerCore/ClaudeRunner.swift` | One `claude -p` call with a JSON schema (reads pipes concurrently). |
 | `Sources/ManagerCore/Prompts.swift` | Schemas, system prompts, full/delta context, capped assistant and search prompts. |
 | `Sources/ManagerCore/JobQueue.swift` | Actor: 2 jobs at a time, one per topic; chat actions, undo/confirm, AI search. |
+| `Sources/ManagerCore/Catchup.swift` | "While you were away" and morning / evening digests: what changed since a time, and when they open. |
 | `Sources/ManagerCore/Search.swift` | Keyword search: FTS5 over bigram-expanded text. |
 | `Sources/ManagerCore/Knowledge.swift` | Home folder, knowledge files, `people.md`, session transcripts. |
 | `Sources/ManagerOSApp/` | SwiftUI app: window, sidebar + search, topic detail, assistant inspector, knowledge, activity, settings, menu bar. |

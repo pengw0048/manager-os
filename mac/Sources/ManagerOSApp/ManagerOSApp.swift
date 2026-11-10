@@ -109,6 +109,7 @@ struct ContentView: View {
         }
         // The window grows when the assistant opens, so the sidebar and detail keep their minimum widths.
         .frame(minWidth: m.showAssistant ? 1240 : 900, minHeight: 620)
+        .toolbarBackground(.hidden, for: .windowToolbar) // content runs up under the toolbar, so no band or line ends at the sidebar edge
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Picker("", selection: $m.page) { ForEach(Page.allCases) { Text(m.L($0.rawValue)).tag($0) } }.pickerStyle(.segmented).fixedSize()

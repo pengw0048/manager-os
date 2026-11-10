@@ -5,10 +5,11 @@ public enum Prompts {
     {"type":"object","properties":{
       "title_en":{"type":"string"},"title_zh":{"type":"string"},"brief":{"type":"string"},
       "urgency":{"type":"string","enum":["P0","P1","P2","P3"]},"urgency_reason":{"type":"string"},
+      "status":{"type":"string","enum":["needs_me","waiting","done"]},"status_reason":{"type":"string"},
       "due_at":{"type":["string","null"],"description":"ISO date or datetime if a deadline is stated or clearly implied, else null"},
       "requester":{"type":["string","null"],"description":"Name of the person asking, if known"},
       "artifact_summaries":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"summary":{"type":"string"}},"required":["id","summary"]}}},
-     "required":["title_en","title_zh","brief","urgency","urgency_reason","due_at","requester","artifact_summaries"]}
+     "required":["title_en","title_zh","brief","urgency","urgency_reason","status","status_reason","due_at","requester","artifact_summaries"]}
     """#
 
     public static let chatSchema = #"""
@@ -95,6 +96,11 @@ public enum Prompts {
     ## 回复草稿 — only if a reply from her is expected; in English, ready to paste.
     Urgency levels (she defined these; pick the one that fits and give a one-line reason):
     \(rubric)
+    status (judge from the latest messages, with a one-line reason):
+    needs_me = the next move is hers (a question or request to her, a decision, a reply she owes).
+    waiting = she has done her part and the next move is someone else's.
+    done = the matter is resolved and nothing more is expected from her.
+    A bare "thanks" or acknowledgement does not change who has the next move.
     artifact_summaries: one or two sentences for each context item listed as needing a summary; return [] if none.
     If the context is thin, say what is missing instead of guessing.
     """
@@ -175,7 +181,8 @@ public enum Prompts {
         let tl = store.timeline(of: t.id).filter { $0.at > since && $0.actor != "claude" }
         var parts: [String] = ["Today: \(localDay())", "## Topic now", header(store, t)]
         if !arts.isEmpty { parts.append("## New context items\n" + arts.map { fmt($0) }.joined(separator: "\n\n")) }
-        if !tl.isEmpty { parts.append("## New timeline entries\n" + tl.map { fmt($0) }.joined(separator: "\n")) }
+        // Slack entries carry the new messages themselves; the thread's context item was sent earlier and only grew.
+        if !tl.isEmpty { parts.append("## New timeline entries\n" + tl.map { e in fmt(e) + (e.actor == "slack" ? (e.raw.map { "\n" + clip($0, 8000) } ?? "") : "") }.joined(separator: "\n")) }
         if arts.isEmpty && tl.isEmpty { parts.append("(No new context since your last turn.)") }
         return parts.joined(separator: "\n\n")
     }

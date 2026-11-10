@@ -78,7 +78,7 @@ public struct ClaudeRunner: Sendable {
 
     /// Runs a process, writes stdin, and reads stdout/stderr concurrently so large output cannot block the pipe.
     /// Long fields come back once (in Chinese); the app stores them in both language slots, e.g. "brief" → brief_en + brief_zh.
-    static let singleFields: Set<String> = ["brief", "urgency_reason", "summary", "reply", "answer", "reason"]
+    static let singleFields: Set<String> = ["brief", "urgency_reason", "status_reason", "summary", "reply", "answer", "reason"]
     static func bothLanguages(_ v: Any) -> Any {
         if let a = v as? [Any] { return a.map(bothLanguages) }
         guard var d = v as? [String: Any] else { return v }

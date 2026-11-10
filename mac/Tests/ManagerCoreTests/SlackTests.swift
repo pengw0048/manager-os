@@ -190,18 +190,50 @@ import GRDB
         await e.queue.idle()
     }
 
-    @Test func lowUrgencyBriefsWaitUntilOpened() async throws {
-        let (e, _) = try setup()
-        let t = try TopicOps.create(e.store, title: "Doc review")
-        await e.queue.enqueueBrief(t.id, trigger: ("t", "t")); await e.queue.idle()
-        var p = TopicPatch(); p.urgency = .P3; try TopicOps.patch(e.store, t.id, p)
-        let jobs = { try e.store.read { try Int.fetchOne($0, sql: "select count(*) from jobs where kind = 'brief' and topic_id = ?", arguments: [t.id]) } ?? 0 }
-        let before = try jobs()
-        await e.queue.briefOnNews(t.id, trigger: ("news", "news"))
-        #expect(try jobs() == before)
-        #expect(e.store.topic(t.id)?.briefDirty == 1)
-        await e.queue.briefIfStale(t.id); await e.queue.idle()
-        #expect(try jobs() == before + 1)
-        #expect(e.store.topic(t.id)?.briefDirty == 0)
+    @Test func repliesReachClaudeAndMoveStatus() async throws {
+        let (e, s) = try setup()
+        guard case .toSort(let item) = try s.ingest(ev("D1", "1.1", text: "can you review the doc")) else { Issue.record("DM should go to To sort"); return }
+        let t = try s.accept(item, topicId: nil, newTitle: "Doc review")
+        await e.queue.enqueueBrief(t, trigger: ("t", "t")); await e.queue.idle()
+        var p = TopicPatch(); p.status = .waiting; try TopicOps.patch(e.store, t, p)
+        func reply(_ ts: String, _ text: String, user: String = "U_BOB") async throws {
+            _ = try s.ingest(ev("D1", ts, thread: "1.1", user: user, text: text))
+            #expect(try s.flush(now: Date().addingTimeInterval(400)) == [t])
+            await e.queue.enqueueBrief(t, trigger: ("news", "news")); await e.queue.idle()
+        }
+        // A reply from someone else: the resumed prompt carries its text, and the topic comes back to her.
+        try await reply("1.2", "STATUS:needs_me which option do you want")
+        #expect((e.calls.last?["prompt"] as? String)?.contains("which option do you want") == true)
+        #expect(e.calls.last?["resume"] as? String != nil)
+        #expect(e.store.topic(t)?.status == .needsMe)
+        // Her own reply hands it over: waiting, with a reminder.
+        try TopicOps.patch(e.store, t, { var p = TopicPatch(); p.remindAt = .some(nil); return p }())
+        try await reply("1.3", "STATUS:waiting option B please", user: "U_ME")
+        #expect(e.store.topic(t)?.status == .waiting)
+        #expect(e.store.topic(t)?.remindAt != nil)
+        // "Done" applies too, with the reason on the timeline; the next message brings the topic back.
+        try await reply("1.4", "STATUS:done shipped, all good")
+        #expect(e.store.topic(t)?.status == .done)
+        #expect(e.store.timeline(of: t).contains { $0.actor == "claude" && $0.kind == "status" && $0.summaryZh.contains("原因") })
+        #expect(s.catchUpTargets().threads.contains { $0.threadTs == "1.1" })
+        try await reply("1.5", "STATUS:needs_me one more thing")
+        #expect(e.store.topic(t)?.status == .needsMe)
+        // Without new Slack messages a refresh leaves her status alone.
+        try TopicOps.patch(e.store, t, { var p = TopicPatch(); p.status = .snoozed; return p }())
+        await e.queue.enqueueBrief(t, trigger: ("manual", "manual")); await e.queue.idle()
+        #expect(e.store.topic(t)?.status == .snoozed)
+    }
+
+    @Test func newsWindowIsTheJobsOwnCutoff() throws {
+        let e = try Env()
+        let t = try TopicOps.create(e.store, title: "X")
+        var entry = TimelineEntry(topicId: t.id, actor: "slack", en: "1 new Slack message")
+        entry.at = "2030-01-01T10:00:00.000Z"
+        try e.store.write { try Store.addTimeline($0, entry) }
+        #expect(TopicOps.hasSlackNews(e.store, t.id, after: "2030-01-01T09:00:00.000Z", until: "2030-01-01T11:00:00.000Z"))
+        // Seen by the previous brief, a first brief, and a message flushed while the job ran: no news for this job.
+        #expect(!TopicOps.hasSlackNews(e.store, t.id, after: "2030-01-01T10:30:00.000Z", until: "2030-01-01T11:00:00.000Z"))
+        #expect(!TopicOps.hasSlackNews(e.store, t.id, after: nil, until: "2030-01-01T11:00:00.000Z"))
+        #expect(!TopicOps.hasSlackNews(e.store, t.id, after: "2030-01-01T09:00:00.000Z", until: "2030-01-01T09:59:00.000Z"))
     }
 }

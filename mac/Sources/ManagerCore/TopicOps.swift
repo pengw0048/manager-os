@@ -23,6 +23,8 @@ public struct BriefResult: Codable, Sendable {
     public var briefEn: String; public var briefZh: String
     public var urgency: Urgency
     public var urgencyReasonEn: String; public var urgencyReasonZh: String
+    public var status: TopicStatus?
+    public var statusReasonEn: String?; public var statusReasonZh: String?
     public var dueAt: String?
     public var requester: String?
     public var artifactSummaries: [ArtifactSummary]
@@ -243,8 +245,15 @@ public enum TopicOps {
         return n
     }
 
+    /// Slack messages logged in (after, until]: what a brief job saw that the previous brief did not.
+    public static func hasSlackNews(_ store: Store, _ id: String, after: String?, until: String) -> Bool {
+        guard let after else { return false }
+        return store.timeline(of: id).contains { $0.actor == "slack" && $0.kind == "event" && $0.at > after && $0.at <= until }
+    }
+
     /// Apply a brief from Claude. Manual urgency, her title, and dates she set are never overwritten.
-    public static func applyBrief(_ store: Store, _ id: String, _ r: BriefResult, jobId: String) throws {
+    /// Status follows Claude only when the brief saw new Slack messages (`news`), so a plain refresh keeps hers.
+    public static func applyBrief(_ store: Store, _ id: String, _ r: BriefResult, jobId: String, news: Bool = false) throws {
         guard var t = store.topic(id) else { return }
         let names = Dictionary(store.levels().map { ($0.id, ($0.nameEn, $0.nameZh)) }, uniquingKeysWith: { a, _ in a })
         let n = { (u: Urgency) in names[u.rawValue] ?? (u.rawValue, u.rawValue) }
@@ -260,6 +269,13 @@ public enum TopicOps {
                 t.urgency = r.urgency
             }
             if let due = r.dueAt, !due.isEmpty, t.dueSource != "me" { t.dueAt = due; t.dueSource = "ai" }
+            if news, let s = r.status, s != t.status, s == .needsMe || s == .done || (s == .waiting && (t.status == .needsMe || t.status == .done)) {
+                try Store.addTimeline(db, TimelineEntry(topicId: id, actor: "claude", kind: "status",
+                    en: "Status: \(statusLabel[t.status]!.0) → \(statusLabel[s]!.0): \(r.statusReasonEn ?? "")",
+                    zh: "状态：\(statusLabel[t.status]!.1) → \(statusLabel[s]!.1)：\(r.statusReasonZh ?? "")", jobId: jobId))
+                if s == .waiting && t.remindAt == nil { t.remindAt = reminderTime(addWorkingDays(2)); t.remindNotifiedAt = nil; t.remindCount = 0 }
+                t.status = s
+            }
             if first && t.remindAt == nil && t.status == .needsMe, let mins = try Level.fetchOne(db, key: t.urgency.rawValue)?.firstRemindMinutes {
                 t.remindAt = ISO8601DateFormatter.mos.string(from: Date().addingTimeInterval(Double(mins) * 60))
             }

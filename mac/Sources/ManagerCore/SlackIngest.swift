@@ -199,7 +199,7 @@ public final class SlackIngest: @unchecked Sendable {
     }
 
     /// Writes mapped messages to their topics once a thread is quiet (60 s, P0: 20 s) or has waited too long (5 min, P0: 2 min).
-    /// Returns the topics that got messages from other people, so the caller can refresh their briefs.
+    /// Returns the topics that got messages (hers included), so the caller can refresh their briefs and status.
     @discardableResult
     public func flush(now: Date = Date()) throws -> [String] {
         let groups = try store.read { db in
@@ -212,7 +212,7 @@ public final class SlackIngest: @unchecked Sendable {
             let urgency = store.topic(topicId)?.urgency
             let (quiet, maxWait): (TimeInterval, TimeInterval) = urgency == .P0 ? (20, 120) : (60, 300)
             guard now.timeIntervalSince(last) >= quiet || now.timeIntervalSince(first) >= maxWait else { continue }
-            let others = try store.write(topics: [topicId]) { db -> Bool in
+            let any = try store.write(topics: [topicId]) { db -> Bool in
                 let msgs = try SlackMessage.fetchAll(db, sql: "select * from slack_messages where flushed = 0 and topic_id = ? order by ts", arguments: [topicId])
                 guard let target = try liveTopic(db, topicId), !msgs.isEmpty else {
                     try db.execute(sql: "update slack_messages set flushed = 1 where topic_id = ?", arguments: [topicId]); return false
@@ -231,9 +231,9 @@ public final class SlackIngest: @unchecked Sendable {
                     }
                 }
                 try db.execute(sql: "update slack_messages set flushed = 1, topic_id = ? where flushed = 0 and topic_id = ?", arguments: [target.id, topicId])
-                return !fromOthers.isEmpty
+                return true
             }
-            if others { briefs.append(topicId) }
+            if any { briefs.append(topicId) }
         }
         return briefs
     }
@@ -361,13 +361,14 @@ public final class SlackIngest: @unchecked Sendable {
         public struct Target: Sendable, Equatable { public var channel: String; public var threadTs: String?; public var oldest: String }
     }
 
-    /// After a reconnect: replies since the last seen ts for threads of open topics, and history for DM channels seen before.
+    /// After a reconnect: replies since the last seen ts for threads of non-archived topics (done ones too, so a wrong
+    /// automatic "done" can come back), and history for DM channels seen before.
     public func catchUpTargets() -> CatchUp {
         let rows = (try? store.read { db in
             try Row.fetchAll(db, sql: """
                 select st.thread_key, (select max(ts) from slack_messages m where m.channel || ':' || coalesce(m.thread_ts, m.ts) = st.thread_key) as last
                 from slack_threads st join topics t on t.id = st.topic_id
-                where st.state = 'mapped' and t.archived_at is null and t.status != 'done'
+                where st.state = 'mapped' and t.archived_at is null
                 """)
         }) ?? []
         let threads = rows.compactMap { r -> CatchUp.Target? in

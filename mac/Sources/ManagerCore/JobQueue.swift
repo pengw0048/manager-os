@@ -41,7 +41,7 @@ public actor JobQueue {
     var running = Set<String>()
     var locked = Set<String>()
     var triageRunning = false
-    var onP0: (@Sendable (Topic) -> Void)?
+    var onAlert: (@Sendable (Topic, BriefAlert) -> Void)?
 
     public static let kinds = ["brief", "chat", "assistant", "search", "triage"]
     /// Model and effort per feature: Settings override the defaults (which come from the environment).
@@ -55,12 +55,22 @@ public actor JobQueue {
     public init(store: Store, home: String, runner: ClaudeRunner = ClaudeRunner(), config: AIConfig = .fromEnvironment(), concurrency: Int = 2) {
         self.store = store; self.home = home; self.runner = runner; self.config = config; self.concurrency = concurrency
         try? store.db.write { db in
-            try db.execute(sql: "update jobs set status = 'queued', started_at = null where status = 'running'")
+            // Queued kinds resume; one-shot calls (triage, search, digest) are not queued, so a cut-off run is marked as failed.
+            try db.execute(sql: "update jobs set status = 'queued', started_at = null where status = 'running' and kind in ('brief','chat','assistant')")
+            try db.execute(sql: "update jobs set status = 'error', error = 'interrupted', finished_at = ? where status in ('running','queued') and kind not in ('brief','chat','assistant')", arguments: [nowISO()])
             try db.execute(sql: "update topics set brief_state = 'queued' where brief_state = 'running'")
         }
     }
 
-    public func setOnP0(_ f: @escaping @Sendable (Topic) -> Void) { onP0 = f }
+    public func setOnAlert(_ f: @escaping @Sendable (Topic, BriefAlert) -> Void) { onAlert = f }
+
+    /// Topics left stale by older versions (which refreshed P2/P3 only when opened) refresh now.
+    public func refreshStale() {
+        let ids = (try? store.read { try String.fetchAll($0, sql: "select id from topics where brief_dirty = 1 and merged_into is null and archived_at is null and brief_state not in ('queued','running')") }) ?? []
+        guard !ids.isEmpty else { return }
+        try? store.write(topics: ids) { db in for id in ids { try db.execute(sql: "update topics set brief_dirty = 0 where id = ?", arguments: [id]) } }
+        for id in ids { enqueueBrief(id, trigger: ("New updates", "有新内容")) }
+    }
 
     public func enqueueBrief(_ topicId: String, trigger: (String, String)) {
         guard store.topic(topicId) != nil else { return }
@@ -76,20 +86,6 @@ public actor JobQueue {
             try db.execute(sql: "update topics set brief_state = 'queued' where id = ?", arguments: [topicId])
         }
         pump()
-    }
-
-    /// New messages on a topic: urgent topics refresh now; others refresh when she next opens them.
-    public func briefOnNews(_ topicId: String, trigger: (String, String)) {
-        guard let t = store.topic(topicId) else { return }
-        if t.urgency == .P0 || t.urgency == .P1 || t.briefEn.isEmpty { enqueueBrief(topicId, trigger: trigger); return }
-        try? store.write(topics: [topicId]) { try $0.execute(sql: "update topics set brief_dirty = 1 where id = ?", arguments: [topicId]) }
-    }
-
-    /// Opening a topic with unread updates refreshes its brief.
-    public func briefIfStale(_ topicId: String) {
-        guard let t = store.topic(topicId), t.briefDirty != 0, t.briefState != "running", t.briefState != "queued" else { return }
-        try? store.write(topics: [topicId]) { try $0.execute(sql: "update topics set brief_dirty = 0 where id = ?", arguments: [topicId]) }
-        enqueueBrief(topicId, trigger: ("Opened with new updates", "打开时有新内容"))
     }
 
     public func enqueueChat(_ topicId: String, text: String) {
@@ -145,6 +141,7 @@ public actor JobQueue {
 
     func execute(_ j: Job) async {
         let started = nowISO()
+        var j = j; j.startedAt = started
         try? store.write(topics: [j.topicId]) { db in
             try db.execute(sql: "update jobs set status = 'running', started_at = ? where id = ?", arguments: [started, j.id])
             if j.kind == "brief" { try db.execute(sql: "update topics set brief_state = 'running' where id = ?", arguments: [j.topicId]) }
@@ -153,7 +150,8 @@ public actor JobQueue {
             switch j.kind {
             case "brief": try await runBrief(j)
             case "chat": try await runChat(j)
-            default: try await runAssistant(j)
+            case "assistant": try await runAssistant(j)
+            default: throw ClaudeError(message: "unknown job kind \(j.kind)")
             }
         } catch {
             let msg = String(String(describing: error).prefix(500))
@@ -195,11 +193,14 @@ public actor JobQueue {
             try store.write { try $0.execute(sql: "update jobs set status = 'done', finished_at = ?, error = 'topic gone' where id = ?", arguments: [nowISO(), j.id]) }
             return
         }
-        let before = t.urgency
+        let prev = try? store.read { try String.fetchOne($0, sql: "select max(started_at) from jobs where kind = 'brief' and topic_id = ? and status = 'done' and id != ?", arguments: [t.id, j.id]) }
         let r = try await onTopicSession(j, t, schema: Prompts.briefSchema, system: Prompts.briefSystem(store.levels())) { Prompts.brief(self.store, t, since: $0) }
         let brief = try decode(BriefResult.self, r.structured)
+        // News is what this prompt saw that the previous brief did not; messages flushed during the run wait for the next one.
+        let news = TopicOps.hasSlackNews(store, t.id, after: prev, until: j.startedAt ?? nowISO())
+        let before = store.topic(t.id) ?? t
         try store.write(topics: [t.id]) { try finish($0, j, r, topicId: t.id) }
-        try TopicOps.applyBrief(store, t.id, brief, jobId: j.id)
+        try TopicOps.applyBrief(store, t.id, brief, jobId: j.id, news: news)
         try store.write(topics: [t.id]) { db in
             try Store.addChat(db, ChatRow(topicId: t.id, role: "run", en: "Background · \(j.triggerEn)", zh: "后台 · \(j.triggerZh)", jobId: j.id))
             try db.execute(sql: "update topics set brief_state = 'idle' where id = ?", arguments: [t.id])
@@ -209,7 +210,8 @@ public actor JobQueue {
             try store.write(topics: [t.id]) { try $0.execute(sql: "update topics set brief_dirty = 0 where id = ?", arguments: [t.id]) }
             enqueueBrief(t.id, trigger: ("More updates arrived during the last run", "上次运行期间又有新内容"))
         }
-        if after.urgency == .P0 && before != .P0 { onP0?(after) }
+        if after.urgency.rank < before.urgency.rank && after.urgency.rank <= Urgency.P1.rank { onAlert?(after, .raised) }
+        else if after.status == .needsMe && before.status != .needsMe { onAlert?(after, .backToHer) }
     }
 
     func runChat(_ j: Job) async throws {
@@ -348,7 +350,7 @@ public actor JobQueue {
                 default: break // unsure: stays in To sort with the suggestion filled in
                 }
             }
-            for t in Set(briefs) { briefOnNews(t, trigger: ("Slack conversation filed", "归入了 Slack 对话")) }
+            for t in Set(briefs) { enqueueBrief(t, trigger: ("Slack conversation filed", "归入了 Slack 对话")) }
             for it in items where try store.read({ try String.fetchOne($0, sql: "select triaged_at from to_sort where id = ?", arguments: [it.id]) }) == nil {
                 try slack.savePrefill(it.id, topicId: nil, titleEn: it.title, titleZh: it.title, reasonEn: "", reasonZh: "")
             }
@@ -380,5 +382,8 @@ public actor JobQueue {
         }
     }
 }
+
+/// Why a finished brief asks the app to notify her.
+public enum BriefAlert: Sendable { case raised, backToHer }
 
 func json(_ d: [String: String]) -> String { String(data: (try? JSONSerialization.data(withJSONObject: d)) ?? Data(), encoding: .utf8) ?? "{}" }

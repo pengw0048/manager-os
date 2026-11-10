@@ -80,8 +80,8 @@ final class AppModel {
         slackCtl = SlackController(ingest: slack, queue: queue)
         Knowledge.exportPeople(store, home: home)
         store.onChange { [weak self] in Task { @MainActor in self?.scheduleReload() } }
-        let notify: @Sendable (Topic) -> Void = { t in Task { @MainActor in AppModel.notify("P0 · Manager OS", t.titleEn) } }
-        Task { await queue.setOnP0(notify); await queue.pump() }
+        let alert: @Sendable (Topic, BriefAlert) -> Void = { t, kind in Task { @MainActor in AppModel.shared?.alert(t, kind) } }
+        Task { await queue.setOnAlert(alert); await queue.refreshStale(); await queue.pump() }
         reload()
         AppModel.shared = self
         if slackCtl.enabled { slackCtl.start() }
@@ -128,7 +128,7 @@ final class AppModel {
                              timeline: store.timeline(of: t.id), chat: store.chat(of: t.id), jobs: store.jobs(of: t.id))
     }
 
-    func select(_ id: String) { page = .topics; tab = .brief; showingSort = false; loadDetail(id); Task { await queue.briefIfStale(id) } }
+    func select(_ id: String) { page = .topics; tab = .brief; showingSort = false; loadDetail(id) }
 
     func acceptSort(_ item: ToSortItem, topicId: String?, newTitle: String) {
         run {
@@ -145,7 +145,7 @@ final class AppModel {
         flash(L("moved") + " → " + (store.topic(to).map(title) ?? ""))
         Task {
             await queue.enqueueBrief(to, trigger: ("Context moved here", "移入了资料"))
-            await queue.briefOnNews(from, trigger: ("Context moved away", "移走了资料"))
+            await queue.enqueueBrief(from, trigger: ("Context moved away", "移走了资料"))
         }
     }
 
@@ -311,6 +311,12 @@ final class AppModel {
             let name = pick(r.level.nameEn, r.level.nameZh)
             AppModel.notify("\(name) · \(L(r.repeated ? "stillOpen" : "reminder"))", title(r.topic), sound: r.level.notify == "interrupt")
         }
+    }
+
+    func alert(_ t: Topic, _ kind: BriefAlert) {
+        let l = level(t.urgency)
+        guard l.notify != "none" else { return }
+        AppModel.notify("\(pick(l.nameEn, l.nameZh)) · Manager OS", title(t), sound: l.notify == "interrupt")
     }
 
     static func notify(_ title: String, _ body: String, sound: Bool = true) {

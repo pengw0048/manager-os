@@ -20,6 +20,7 @@ process.stdin.on('end', () => {
     out = {
       title_en: 'Fake title', title_zh: '假标题', brief: '## 请求\n做这件事。',
       urgency: urgent ? 'P0' : 'P2', urgency_reason: urgent ? '事故' : '普通',
+      status: (prompt.match(/STATUS:(\w+)/g) || ['STATUS:needs_me']).pop().slice(7), status_reason: '原因',
       due_at: null, requester: null, artifact_summaries: ids.map((id) => ({ id, summary: `摘要 ${id}` })),
     };
   } else if (props.includes('assignments')) {

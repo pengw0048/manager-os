@@ -38,7 +38,7 @@ public struct ToSortItem: Codable, Hashable, Sendable, FetchableRecord, Persista
     public var threadKey: String
     public var title: String
     public var permalink: String?
-    public var status: String // pending | accepted | ignored
+    public var status: String // pending | accepted | ignored | skipped
     public var prefillTopicId: String?
     public var prefillTitleEn: String?
     public var prefillTitleZh: String?
@@ -47,6 +47,10 @@ public struct ToSortItem: Codable, Hashable, Sendable, FetchableRecord, Persista
     public var triagedAt: String?
     public var createdAt: String
     public var updatedAt: String
+    /// Where it was filed, and by whom ("me" | "auto").
+    public var filedTopicId: String? = nil
+    public var artifactId: String? = nil
+    public var filedBy: String? = nil
 }
 
 public struct SlackMessage: Codable, Hashable, Sendable, FetchableRecord, PersistableRecord {
@@ -243,13 +247,17 @@ public final class SlackIngest: @unchecked Sendable {
 
     /// File a "To sort" item into an existing topic or a new one. Later messages in its threads go to that topic.
     @discardableResult
-    public func accept(_ itemId: String, topicId: String?, newTitle: String? = nil) throws -> String {
+    public func accept(_ itemId: String, topicId: String?, newTitle: String? = nil, newTitleZh: String? = nil, auto: Bool = false) throws -> String {
         guard let item = try store.read({ try ToSortItem.fetchOne($0, key: itemId) }), item.status == "pending" else { throw TopicError.notFound }
         let msgs = messages(of: itemId)
         let requester = msgs.first { $0.mine == 0 }.map { $0.userName.isEmpty ? $0.user : $0.userName } ?? ""
         let target: String
         if let topicId, let t = try store.read({ try liveTopic($0, topicId) }) { target = t.id }
-        else { target = try TopicOps.create(store, title: newTitle ?? item.prefillTitleEn ?? "", requester: requester).id }
+        else {
+            var t = try TopicOps.create(store, title: newTitle ?? item.prefillTitleEn ?? "", requester: requester)
+            if auto, let zh = newTitleZh, !zh.isEmpty { t.titleZh = zh; try store.write(topics: [t.id]) { try t.update($0) } }
+            target = t.id
+        }
         let place = item.channel.hasPrefix("D") ? "DM" : "#\(item.channelName.isEmpty ? item.channel : item.channelName)"
         let lines = msgs.map(\.line).joined(separator: "\n")
         try store.write(topics: [target]) { db in
@@ -263,12 +271,30 @@ public final class SlackIngest: @unchecked Sendable {
             }
             try db.execute(sql: "update slack_messages set topic_id = ?, flushed = 1 where to_sort_id = ?", arguments: [target, itemId])
             try Store.addTimeline(db, TimelineEntry(topicId: target, actor: "slack", kind: "context",
-                en: "Slack conversation added from \(place) (\(msgs.count) messages)", zh: "加入了 \(place) 的 Slack 对话（\(msgs.count) 条消息）",
+                en: auto ? "Slack conversation from \(place) filed here automatically (\(msgs.count) messages)" : "Slack conversation added from \(place) (\(msgs.count) messages)",
+                zh: auto ? "\(place) 的 Slack 对话被自动归到这里（\(msgs.count) 条消息）" : "加入了 \(place) 的 Slack 对话（\(msgs.count) 条消息）",
                 sourceUrl: item.permalink, raw: lines))
             try db.execute(sql: "update topics set last_activity_at = ?, archived_at = null where id = ?", arguments: [nowISO(), target])
-            try db.execute(sql: "update to_sort set status = 'accepted', updated_at = ? where id = ?", arguments: [nowISO(), itemId])
+            try db.execute(sql: "update to_sort set status = 'accepted', updated_at = ?, filed_topic_id = ?, artifact_id = ?, filed_by = ? where id = ?",
+                           arguments: [nowISO(), target, art.id, auto ? "auto" : "me", itemId])
         }
         return target
+    }
+
+    /// Not worth a topic (thanks, FYI): set aside without silencing the thread, so she can still add it.
+    public func skip(_ itemId: String) throws {
+        try store.write { try $0.execute(sql: "update to_sort set status = 'skipped', updated_at = ? where id = ? and status = 'pending'", arguments: [nowISO(), itemId]) }
+    }
+
+    /// A skipped item goes back to "To sort".
+    public func restore(_ itemId: String) throws {
+        try store.write { try $0.execute(sql: "update to_sort set status = 'pending', updated_at = ? where id = ? and status = 'skipped'", arguments: [nowISO(), itemId]) }
+    }
+
+    /// Items filed or skipped automatically in the last `hours`, newest first, so she can check them.
+    public func recentAuto(hours: Double = 24, now: Date = Date()) -> [ToSortItem] {
+        let since = ISO8601DateFormatter.mos.string(from: now.addingTimeInterval(-hours * 3600))
+        return (try? store.read { try ToSortItem.fetchAll($0, sql: "select * from to_sort where (filed_by = 'auto' or status = 'skipped') and updated_at >= ? order by updated_at desc", arguments: [since]) }) ?? []
     }
 
     /// Dismiss an item; later replies in its threads are ignored too.

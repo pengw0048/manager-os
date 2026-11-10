@@ -25,9 +25,13 @@ process.stdin.on('end', () => {
   } else if (props.includes('assignments')) {
     const items = [...prompt.matchAll(/### Item (s_\w+)/g)].map((m) => m[1]);
     const topic = (prompt.match(/- (t_\w+):/) || [])[1] || '';
-    out = { assignments: items.map((id, i) => ({ item_id: id, topic_id: i === 0 ? topic : '', title_en: `New ${i}`, title_zh: `新 ${i}`, reason_en: 'r', reason_zh: '理由' })) };
+    out = { assignments: items.map((id, i) => {
+      const body = (prompt.split(`### Item ${id}`)[1] || '').split('### Item')[0];
+      const action = /thanks/i.test(body) ? 'skip' : i === 0 && topic ? 'existing' : 'new';
+      return { item_id: id, action, topic_id: action === 'existing' ? topic : '', title_en: `New ${i}`, title_zh: `新 ${i}`, reason_en: 'r', reason_zh: '理由' };
+    }) };
   } else if (props.includes('hits')) {
-    const sys = arg('--append-system-prompt') || '';
+    const sys = arg('--system-prompt') || '';
     const q = prompt.replace(/^Query:\s*/, '').trim().toLowerCase();
     const line = sys.split('\n').find((l) => /^- t_\w+/.test(l) && l.toLowerCase().includes(q.split(' ')[0])) || sys.split('\n').find((l) => /^- t_\w+/.test(l));
     const id = line ? line.match(/^- (t_\w+)/)[1] : null;

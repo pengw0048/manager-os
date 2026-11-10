@@ -79,13 +79,13 @@ enum TitlebarDoubleClick {
         m.tab = .ctx; await wait(1); shot("2-context")
         m.tab = .tl; await wait(1); shot("3-timeline")
         m.tab = .claude; await wait(1); shot("4-claude")
-        m.page = .activity; await wait(1.5); shot("5-activity")
+        m.showingSort = true; await wait(1.5); shot("5-to-sort"); m.showingSort = false
         m.page = .topics; m.tab = .brief; m.lang = "zh"
         main()?.setFrame(NSRect(x: 80, y: 80, width: 990, height: 860), display: true)
         await wait(1); shot("6a-narrow"); m.showAssistant = true; await wait(1.5); shot("6-zh-assistant")
         m.showAssistant = false; m.searchText = "回滚"; await wait(1.5); shot("7-search")
         m.searchText = ""; m.lang = "en"
-        if let id = m.selection { m.sheet = .confirmDelete(id) }; await wait(1); shot("8-delete-sheet"); m.sheet = nil
+        m.tab = .tl; await wait(1); shot("8-timeline-zh"); m.lang = "en"; m.tab = .claude; await wait(1); shot("9-ask")
     }
 }
 #endif
@@ -103,22 +103,36 @@ struct ManagerOSApp: App {
                 Text("Could not open the Manager OS database.").padding(40)
             }
         }
-        .commands {
-            CommandGroup(replacing: .newItem) {
-                Button(model?.L("newTopic") ?? "New topic") { model?.sheet = .newTopic(parent: nil) }.keyboardShortcut("n")
-                Button(model?.L("pasteTopic") ?? "New topic from clipboard") { model?.pasteAsTopic() }.keyboardShortcut("v", modifiers: [.command, .shift])
-            }
-            CommandMenu("Manager OS") {
-                Button(model?.L("assistant") ?? "Assistant") { model?.showAssistant.toggle() }.keyboardShortcut("k")
-                Button(model?.L("refresh") ?? "Refresh brief") { if let id = model?.selection { model?.refreshBrief(id) } }.keyboardShortcut("r")
-            }
-        }
+        .commands { if let model { AppCommands(m: model) } }
+        Window("Activity", id: "activity") { if let model { ActivityView().environment(model).frame(minWidth: 820, minHeight: 560).navigationTitle(model.L("activity")) } }
+        Window("Knowledge", id: "knowledge") { if let model { KnowledgeView().environment(model).frame(minWidth: 820, minHeight: 560).navigationTitle(model.L("knowledge")) } }
         Settings { if let model { SettingsView().environment(model) } }
         MenuBarExtra {
             if let model { MenuBarView().environment(model) }
         } label: {
             let n = model?.count(.needs) ?? 0
             Label("\(n)", systemImage: (model?.rows.contains { $0.topic.urgency == .P0 && !$0.topic.isArchived && $0.topic.status != .done } ?? false) ? "exclamationmark.circle.fill" : "checklist")
+        }
+    }
+}
+
+struct AppCommands: Commands {
+    let m: AppModel
+    @Environment(\.openWindow) var openWindow
+    var body: some Commands {
+        CommandGroup(replacing: .newItem) {
+            Button(m.L("newTopic")) { m.sheet = .newTopic(parent: nil) }.keyboardShortcut("n")
+            Button(m.L("pasteTopic")) { m.pasteAsTopic() }.keyboardShortcut("v", modifiers: [.command, .shift])
+        }
+        CommandGroup(after: .toolbar) {
+            Picker(m.L("lang"), selection: Binding(get: { m.lang }, set: { m.lang = $0 })) { Text("English").tag("en"); Text("中文").tag("zh") }
+        }
+        CommandMenu("Manager OS") {
+            Button(m.L("assistant")) { m.showAssistant.toggle() }.keyboardShortcut("k")
+            Button(m.L("refresh")) { if let id = m.selection { m.refreshBrief(id) } }.keyboardShortcut("r")
+            Divider()
+            Button(m.L("activity")) { openWindow(id: "activity") }.keyboardShortcut("a", modifiers: [.command, .option])
+            Button(m.L("knowledge")) { openWindow(id: "knowledge") }.keyboardShortcut("k", modifiers: [.command, .option])
         }
     }
 }
@@ -143,28 +157,23 @@ struct ContentView: View {
     @Environment(AppModel.self) var m
     var body: some View {
         @Bindable var m = m
-        Group {
-            switch m.page {
-            case .topics: TopicsSplit()
-            case .knowledge: KnowledgeView().assistantInspector()
-            case .activity: ActivityView().assistantInspector()
-            }
-        }
+        TopicsSplit()
         // The window grows when the assistant opens, so the sidebar and detail keep their minimum widths.
         .frame(minWidth: m.showAssistant ? 1240 : 900, minHeight: 620)
         .toolbarBackground(.hidden, for: .windowToolbar) // content runs up under the toolbar, so no band or line ends at the sidebar edge
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                Picker("", selection: $m.page) { ForEach(Page.allCases) { Text(m.L($0.rawValue)).tag($0) } }.pickerStyle(.segmented).fixedSize()
-            }
             ToolbarItemGroup(placement: .primaryAction) {
-                Picker("", selection: $m.lang) { Text("EN").tag("en"); Text("中文").tag("zh") }.pickerStyle(.segmented).fixedSize()
                 Button { m.pasteAsTopic() } label: { Label(m.L("pasteTopic"), systemImage: "doc.on.clipboard") }.help(m.L("pasteTopicHelp"))
                 Button { m.sheet = .newTopic(parent: nil) } label: { Label(m.L("newTopic"), systemImage: "plus") }
-                Button { m.showAssistant.toggle() } label: { Label(m.L("assistant"), systemImage: "sparkles") }
+                Button { m.showAssistant.toggle() } label: { Label(m.L("assistant"), systemImage: "sidebar.right") }.help(m.L("assistant") + " ⌘K")
             }
         }
         .sheet(item: $m.sheet) { SheetHost(kind: $0).environment(m) }
+        .confirmationDialog(m.L("deleteQ"), isPresented: Binding(get: { m.deleting != nil }, set: { if !$0 { m.deleting = nil } }), presenting: m.deleting) { id in
+            Button(m.L("deleteBtn"), role: .destructive) { m.delete(id) }
+            Button(m.L("archiveInstead")) { m.archive(id) }
+            Button(m.L("cancel"), role: .cancel) {}
+        } message: { id in Text("\(m.store.topic(id).map(m.title) ?? "")\n\n\(m.L("deleteD"))") }
         .overlay(alignment: .bottom) {
             if let t = m.toast {
                 Text(t).padding(.horizontal, 14).padding(.vertical, 9).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9)).padding(.bottom, 20)
@@ -180,7 +189,7 @@ struct TopicsSplit: View {
             SidebarView().navigationSplitViewColumnWidth(min: 280, ideal: 330, max: 460)
         } detail: {
             Group {
-                if m.showingSort && !m.toSort.isEmpty { SortView() }
+                if m.showingSort { SortView() }
                 else if let d = m.detail { TopicDetailView(d: d).id(d.topic.id) }
                 else { Text(m.L("empty")).foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.canvas) }
             }
@@ -214,14 +223,16 @@ struct SidebarView: View {
                     ForEach(ListView.allCases) { v in Text("\(m.L("v_" + v.rawValue)) (\(m.count(v)))").tag(v) }
                 }.labelsHidden().padding(.horizontal, 10).padding(.vertical, 8)
                 if m.view == .archived { Text(m.L("archivedNote")).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 12).padding(.bottom, 6) }
-                if !m.toSort.isEmpty {
+                if !m.toSort.isEmpty || !m.autoSorted.isEmpty {
                     Button { m.showingSort = true; m.page = .topics } label: {
                         HStack {
                             Image(systemName: "tray.full")
                             Text(m.L("toSort")).fontWeight(.medium)
                             Spacer()
-                            Text("\(m.toSort.count)").font(.caption.weight(.semibold)).padding(.horizontal, 7).padding(.vertical, 2)
-                                .background(Color.accentColor.opacity(0.15), in: Capsule())
+                            if !m.toSort.isEmpty {
+                                Text("\(m.toSort.count)").font(.caption.weight(.semibold)).padding(.horizontal, 7).padding(.vertical, 2)
+                                    .background(Color.accentColor.opacity(0.15), in: Capsule())
+                            }
                         }
                         .padding(.horizontal, 10).padding(.vertical, 7).contentShape(Rectangle())
                         .background(m.showingSort ? Color.accentColor.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 7))
@@ -245,6 +256,7 @@ struct TopicRowView: View {
     @Environment(AppModel.self) var m
     let row: TopicRow
     let child: Bool
+    @State private var dropTarget = false
     var body: some View {
         let t = row.topic
         HStack(alignment: .top, spacing: 8) {
@@ -256,10 +268,28 @@ struct TopicRowView: View {
             Spacer(minLength: 4)
             if row.followupDue, let r = t.remindAt { Label(reminderLabel(r, zh: m.lang == "zh").0, systemImage: "bell.fill").font(.caption).foregroundStyle(.orange) }
             else if t.briefState == "running" || t.briefState == "queued" { ProgressView().controlSize(.small) }
-            else if let due = t.dueAt { Text(String(due.prefix(10))).font(.caption).foregroundStyle(.secondary) }
+            else if let due = t.dueAt { dueText(due) }
         }
         .padding(.leading, child ? 18 : 0).padding(.vertical, 2)
+        .contentShape(Rectangle())
+        .background(dropTarget ? Color.accentColor.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+        .dropDestination(for: String.self) { items, _ in m.drop(items, on: row.id) } isTargeted: { dropTarget = $0 }
     }
+    /// "Overdue" / "Today" / "Tomorrow" / "Yesterday" / "Nov 14" for a due date.
+    func dueText(_ due: String) -> some View {
+        let d = parseISO(due) ?? parseISO(due + "T23:59:00Z")
+        let cal = Calendar.current
+        var label = String(due.prefix(10)), late = false
+        if let d {
+            late = d < Date() && !cal.isDateInToday(d)
+            if late { label = m.L("overdue") }
+            else if cal.isDateInToday(d) { label = m.L("today") }
+            else if cal.isDateInTomorrow(d) { label = m.L("tomorrowW") }
+            else { let f = DateFormatter(); f.locale = Locale(identifier: m.lang == "zh" ? "zh_CN" : "en_US"); f.setLocalizedDateFormatFromTemplate("MMMd"); label = f.string(from: d) }
+        }
+        return Text(label).font(.caption).foregroundStyle(late ? Color.red : Color.secondary)
+    }
+
     func ago(_ iso: String) -> String {
         guard let d = parseISO(iso) else { return "" }
         let mins = max(0, Date().timeIntervalSince(d) / 60), zh = m.lang == "zh"
@@ -273,9 +303,13 @@ struct TopicRowView: View {
 /// Archive / rename / delete and the structure actions, shared by the row context menu and the detail "⋯" menu.
 struct TopicMenuItems: View {
     @Environment(AppModel.self) var m
+    @Environment(\.openWindow) var openWindow
     let id: String
     var body: some View {
         let t = m.rows.first { $0.id == id }?.topic
+        Button(m.L("refresh")) { m.refreshBrief(id) }
+        if t?.parentId == nil { Button(m.L("addSub")) { m.sheet = .newTopic(parent: id) } }
+        Divider()
         Button(m.L("rename")) { m.sheet = .rename(id) }
         Button(m.L("merge")) { m.sheet = .merge(id) }
         Button(m.L("split")) { m.select(id); m.sheet = .split(id) }
@@ -283,7 +317,9 @@ struct TopicMenuItems: View {
         if t?.parentId != nil { Button(m.L("promote")) { m.patch(id) { $0.parentId = .some(nil) } } }
         Divider()
         if t?.isArchived == true { Button(m.L("unarchive")) { m.unarchive(id) } } else { Button(m.L("archive")) { m.archive(id) } }
-        Button(m.L("delete"), role: .destructive) { m.sheet = .confirmDelete(id) }
+        Button(m.L("delete"), role: .destructive) { m.deleting = id }
+        Divider()
+        Button(m.L("usage")) { openWindow(id: "activity") }
     }
 }
 
@@ -291,27 +327,6 @@ struct SearchResultsView: View {
     @Environment(AppModel.self) var m
     var body: some View {
         List {
-            Section(m.L("aiResults")) {
-                if m.aiSearching { HStack { ProgressView().controlSize(.small); Text(m.L("aiSearching")).foregroundStyle(.secondary) } }
-                else if let a = m.aiAnswer {
-                    let ans = m.pick(a.answerEn, a.answerZh)
-                    if !ans.isEmpty { Text(ans).font(.callout) }
-                    ForEach(a.hits, id: \.self) { h in
-                        if let t = m.store.topic(h.topicId) {
-                            Button { m.select(t.id) } label: {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    HStack { Circle().fill(t.urgency.color).frame(width: 7, height: 7); Text(m.title(t)).fontWeight(.medium); if t.isArchived { Text(m.L("archived")).font(.caption2).foregroundStyle(.secondary) } }
-                                    Text(m.pick(h.reasonEn, h.reasonZh)).font(.caption).foregroundStyle(.secondary)
-                                }
-                            }.buttonStyle(.plain)
-                        }
-                    }
-                    if a.hits.isEmpty { Text(m.L("empty")).foregroundStyle(.secondary) }
-                } else {
-                    Button { m.runAISearch() } label: { Label("\(m.L("askAI")): “\(m.searchText)”", systemImage: "sparkles") }
-                    if let e = m.aiError { Text(e).font(.caption).foregroundStyle(.red) }
-                }
-            }
             Section(m.L("kwResults")) {
                 ForEach(m.keywordHits, id: \.self) { h in
                     if let t = m.store.topic(h.topicId) {
@@ -329,6 +344,27 @@ struct SearchResultsView: View {
                     }
                 }
                 if m.keywordHits.isEmpty { Text(m.L("empty")).foregroundStyle(.secondary) }
+            }
+            Section(m.L("aiResults")) {
+                if m.aiSearching { HStack { ProgressView().controlSize(.small); Text(m.L("aiSearching")).foregroundStyle(.secondary) } }
+                else if let a = m.aiAnswer {
+                    let ans = m.pick(a.answerEn, a.answerZh)
+                    if !ans.isEmpty { Text(ans).font(.callout) }
+                    ForEach(a.hits, id: \.self) { h in
+                        if let t = m.store.topic(h.topicId) {
+                            Button { m.select(t.id) } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack { Circle().fill(t.urgency.color).frame(width: 7, height: 7); Text(m.title(t)).fontWeight(.medium); if t.isArchived { Text(m.L("archived")).font(.caption2).foregroundStyle(.secondary) } }
+                                    Text(m.pick(h.reasonEn, h.reasonZh)).font(.caption).foregroundStyle(.secondary)
+                                }
+                            }.buttonStyle(.plain)
+                        }
+                    }
+                    if a.hits.isEmpty { Text(m.L("empty")).foregroundStyle(.secondary) }
+                } else {
+                    Button { m.runAISearch() } label: { Label("\(m.L("askAI")) “\(m.searchText)”", systemImage: "questionmark.bubble") }
+                    if let e = m.aiError { Text(e).font(.caption).foregroundStyle(.red) }
+                }
             }
         }
     }

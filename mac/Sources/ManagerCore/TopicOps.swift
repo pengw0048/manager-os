@@ -138,6 +138,8 @@ public enum TopicOps {
     public static func patch(_ store: Store, _ id: String, _ p: TopicPatch) throws {
         guard var t = store.topic(id) else { throw TopicError.notFound }
         if case let .some(pid?) = p.parentId, pid == id || isDescendant(store, pid, of: id) { throw TopicError.cycle }
+        let names = Dictionary(store.levels().map { ($0.id, ($0.nameEn, $0.nameZh)) }, uniquingKeysWith: { a, _ in a })
+        let n = { (u: Urgency) in names[u.rawValue] ?? (u.rawValue, u.rawValue) }
         try store.write(topics: [id]) { db in
             if let title = p.title, title != t.titleEn { t.titleEn = title; t.titleZh = title; t.titleSource = "me" }
             if let r = p.requester { t.requester = r }
@@ -151,7 +153,7 @@ public enum TopicOps {
             }
             if let u = p.urgency, u != t.urgency || t.urgencySource != "manual" {
                 if t.urgencySource == "auto" { t.aiUrgency = t.urgency }
-                try Store.addTimeline(db, TimelineEntry(topicId: id, actor: "me", kind: "urgency", en: "You set urgency \(t.urgency.rawValue) → \(u.rawValue)", zh: "你把紧急程度从 \(t.urgency.rawValue) 改为 \(u.rawValue)"))
+                try Store.addTimeline(db, TimelineEntry(topicId: id, actor: "me", kind: "urgency", en: "You set urgency \(n(t.urgency).0) → \(n(u).0)", zh: "你把紧急程度从\(n(t.urgency).1)改为\(n(u).1)"))
                 t.urgency = u; t.urgencySource = "manual"; t.urgencyPinnedUntil = p.urgencyPinnedUntil ?? nil
             } else if let pin = p.urgencyPinnedUntil, t.urgencySource == "manual" {
                 t.urgencyPinnedUntil = pin
@@ -201,13 +203,38 @@ public enum TopicOps {
     }
 
     /// Move the chosen artifacts and timeline entries into a new topic (top level or sub-topic).
+    /// Moves one piece of context (e.g. a Slack conversation filed to the wrong topic) to another topic.
+    /// Later replies in that Slack thread follow it; the old topic's brief starts a fresh session.
+    public static func moveArtifact(_ store: Store, _ artifactId: String, from: String, to: String) throws {
+        guard from != to, let src = store.topic(from), let dst = store.topic(to) else { throw TopicError.notFound }
+        try store.write(topics: [from, to]) { db in
+            try db.execute(sql: "update topic_artifacts set topic_id = ? where topic_id = ? and artifact_id = ?", arguments: [to, from, artifactId])
+            guard db.changesCount > 0 else { throw TopicError.notFound }
+            try followSlack(db, artifactId: artifactId, to: to)
+            let title = try String.fetchOne(db, sql: "select title from artifacts where id = ?", arguments: [artifactId]) ?? ""
+            try Store.addTimeline(db, TimelineEntry(topicId: to, actor: "me", kind: "structure", en: "Moved here from \"\(src.titleEn)\": \(title)", zh: "从「\(src.titleZh)」移过来：\(title)"))
+            try Store.addTimeline(db, TimelineEntry(topicId: from, actor: "me", kind: "structure", en: "Moved to \"\(dst.titleEn)\": \(title)", zh: "移到了「\(dst.titleZh)」：\(title)"))
+            try db.execute(sql: "update topics set needs_fresh_session = 1 where id = ?", arguments: [from])
+            try db.execute(sql: "update topics set last_activity_at = ?, archived_at = null where id = ?", arguments: [nowISO(), to])
+        }
+    }
+
+    static func followSlack(_ db: Database, artifactId: String, to: String) throws {
+        try db.execute(sql: "update slack_messages set topic_id = ? where channel || ':' || coalesce(thread_ts, ts) in (select thread_key from slack_threads where artifact_id = ?)", arguments: [to, artifactId])
+        try db.execute(sql: "update slack_threads set topic_id = ? where artifact_id = ?", arguments: [to, artifactId])
+        try db.execute(sql: "update to_sort set filed_topic_id = ? where artifact_id = ?", arguments: [to, artifactId])
+    }
+
     public static func split(_ store: Store, _ id: String, title: String, artifactIds: [String], timelineIds: [Int64], asSub: Bool) throws -> Topic {
         guard let t = store.topic(id) else { throw TopicError.notFound }
         var n = Topic(title: title, parentId: asSub ? id : t.parentId, requester: t.requester, titleSource: "me")
         n.urgency = t.urgency
         try store.write(topics: [id, n.id]) { db in
             try n.insert(db)
-            for a in artifactIds { try db.execute(sql: "update topic_artifacts set topic_id = ? where topic_id = ? and artifact_id = ?", arguments: [n.id, id, a]) }
+            for a in artifactIds {
+                try db.execute(sql: "update topic_artifacts set topic_id = ? where topic_id = ? and artifact_id = ?", arguments: [n.id, id, a])
+                try followSlack(db, artifactId: a, to: n.id)
+            }
             for e in timelineIds { try db.execute(sql: "update timeline set topic_id = ? where topic_id = ? and id = ?", arguments: [n.id, id, e]) }
             try Store.addTimeline(db, TimelineEntry(topicId: n.id, actor: "me", kind: "structure", en: "Split from \"\(t.titleEn)\"", zh: "从「\(t.titleZh)」拆分出来"))
             try Store.addTimeline(db, TimelineEntry(topicId: id, actor: "me", kind: "structure", en: "Split out \"\(title)\"", zh: "拆分出「\(title)」"))
@@ -219,6 +246,8 @@ public enum TopicOps {
     /// Apply a brief from Claude. Manual urgency, her title, and dates she set are never overwritten.
     public static func applyBrief(_ store: Store, _ id: String, _ r: BriefResult, jobId: String) throws {
         guard var t = store.topic(id) else { return }
+        let names = Dictionary(store.levels().map { ($0.id, ($0.nameEn, $0.nameZh)) }, uniquingKeysWith: { a, _ in a })
+        let n = { (u: Urgency) in names[u.rawValue] ?? (u.rawValue, u.rawValue) }
         try store.write(topics: [id]) { db in
             let first = t.briefEn.isEmpty
             t.briefEn = r.briefEn; t.briefZh = r.briefZh; t.briefUpdatedAt = nowISO(); t.lastBriefAt = nowISO()
@@ -227,7 +256,7 @@ public enum TopicOps {
             else if t.titleZh == t.titleEn && !r.titleZh.isEmpty && t.titleSource == "ai" { t.titleZh = r.titleZh }
             if t.urgencySource == "auto" && r.urgency != t.urgency {
                 try Store.addTimeline(db, TimelineEntry(topicId: id, actor: "claude", kind: "urgency",
-                    en: "Urgency \(t.urgency.rawValue) → \(r.urgency.rawValue): \(r.urgencyReasonEn)", zh: "紧急程度 \(t.urgency.rawValue) → \(r.urgency.rawValue)：\(r.urgencyReasonZh)", jobId: jobId))
+                    en: "Urgency \(n(t.urgency).0) → \(n(r.urgency).0): \(r.urgencyReasonEn)", zh: "紧急程度\(n(t.urgency).1) → \(n(r.urgency).1)：\(r.urgencyReasonZh)", jobId: jobId))
                 t.urgency = r.urgency
             }
             if let due = r.dueAt, !due.isEmpty, t.dueSource != "me" { t.dueAt = due; t.dueSource = "ai" }
@@ -239,7 +268,7 @@ public enum TopicOps {
                 try db.execute(sql: "update artifacts set summary_en = ?, summary_zh = ? where id = ?", arguments: [s.summaryEn, s.summaryZh, s.id])
             }
             try Store.addTimeline(db, TimelineEntry(topicId: id, actor: "claude", kind: "brief",
-                en: first ? "Claude wrote the first brief" : "Claude updated the brief", zh: first ? "Claude 写了第一版简报" : "Claude 更新了简报", jobId: jobId))
+                en: first ? "Summary written" : "Summary updated", zh: first ? "写好了概要" : "更新了概要", jobId: jobId))
             try t.update(db)
         }
     }

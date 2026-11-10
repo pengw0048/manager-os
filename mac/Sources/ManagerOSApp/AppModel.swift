@@ -39,6 +39,8 @@ final class AppModel {
     let slack: SlackIngest
     let slackCtl: SlackController
     var toSort: [ToSortItem] = []
+    var autoSorted: [ToSortItem] = []
+    var deleting: String?
     var showingSort = false
 
     var lang: String = UserDefaults.standard.string(forKey: "lang") ?? "en" { didSet { UserDefaults.standard.set(lang, forKey: "lang") } }
@@ -63,7 +65,7 @@ final class AppModel {
     var toast: String?
 
     enum SheetKind: Identifiable, Equatable {
-        case newTopic(parent: String?), merge(String), split(String), move(String), rename(String), transcript(String), confirmDelete(String)
+        case newTopic(parent: String?), merge(String), split(String), move(String), rename(String), transcript(String)
         var id: String { String(describing: self) }
     }
 
@@ -114,7 +116,8 @@ final class AppModel {
         people = store.people()
         levels = store.levels()
         toSort = slack.pendingItems()
-        if toSort.isEmpty { showingSort = false }
+        autoSorted = slack.recentAuto()
+        if toSort.isEmpty && autoSorted.isEmpty { showingSort = false }
         if !searchText.isEmpty { runKeywordSearch() }
     }
 
@@ -125,7 +128,7 @@ final class AppModel {
                              timeline: store.timeline(of: t.id), chat: store.chat(of: t.id), jobs: store.jobs(of: t.id))
     }
 
-    func select(_ id: String) { page = .topics; tab = .brief; showingSort = false; loadDetail(id) }
+    func select(_ id: String) { page = .topics; tab = .brief; showingSort = false; loadDetail(id); Task { await queue.briefIfStale(id) } }
 
     func acceptSort(_ item: ToSortItem, topicId: String?, newTitle: String) {
         run {
@@ -134,6 +137,35 @@ final class AppModel {
         }
     }
     func ignoreSort(_ item: ToSortItem) { run { try slack.ignore(item.id) }; reload() }
+    func restoreSort(_ item: ToSortItem) { run { try slack.restore(item.id) }; reload() }
+
+    /// Moves a piece of context to another topic; both briefs refresh (the old one from a fresh session).
+    func moveArtifact(_ artifactId: String, from: String, to: String) {
+        do { try TopicOps.moveArtifact(store, artifactId, from: from, to: to) } catch { flash("\(error)"); return }
+        flash(L("moved") + " → " + (store.topic(to).map(title) ?? ""))
+        Task {
+            await queue.enqueueBrief(to, trigger: ("Context moved here", "移入了资料"))
+            await queue.briefOnNews(from, trigger: ("Context moved away", "移走了资料"))
+        }
+    }
+
+    /// Drop payloads: "artifact|<id>|<from topic>" (context) or "sort|<to-sort id>".
+    func drop(_ payloads: [String], on topicId: String) -> Bool {
+        var done = false
+        for p in payloads {
+            let parts = p.split(separator: "|").map(String.init)
+            if parts.count == 3, parts[0] == "artifact" { moveArtifact(parts[1], from: parts[2], to: topicId); done = true }
+            else if parts.count == 2, parts[0] == "sort", let it = (toSort + autoSorted).first(where: { $0.id == parts[1] }) {
+                if let aid = it.artifactId, let from = it.filedTopicId { moveArtifact(aid, from: from, to: topicId) }
+                else {
+                    if it.status == "skipped" { run { try slack.restore(it.id) } }
+                    acceptSort(it, topicId: topicId, newTitle: "")
+                }
+                done = true
+            }
+        }
+        return done
+    }
 
     func matches(_ r: TopicRow) -> Bool { matches(r, in: view) }
     func matches(_ r: TopicRow, in view: ListView) -> Bool {

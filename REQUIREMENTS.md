@@ -626,3 +626,19 @@ menu-bar helper). Move to B only if the workflow proves useful.
 | M3 | Feedback loop on urgency, digests, tuning of weights. |
 
 M0 is useful on day one before any source integration exists.
+
+## 7e. Auto-sorting, moving context, and token use (built 2026-11-10)
+
+- **Auto-sorting.** Triage (Haiku) picks an action per Slack conversation: `existing` (file into an open topic),
+  `new` (create a topic), or `skip` (thanks / FYI). The app applies it at once; unsure items stay in To sort.
+  To sort lists everything sorted or skipped automatically in the last 24 hours. Settings → Slack turns this off.
+- **Moving context.** Drag a source (Sources tab) or an auto-sorted conversation onto a topic in the sidebar,
+  or use "Move to". Later replies in that Slack thread follow it; the old topic's summary starts a fresh session.
+- **Token use** (measured on the dev data before these changes: a brief was ~$0.10, of which ~60% output):
+  - The CLI's default coding system prompt (~8.5k tokens per call) is replaced with a short one (`--system-prompt`).
+  - Summaries are capped at about 180 words per language.
+  - New messages on P2/P3 topics only mark the summary stale; it refreshes when she opens the topic.
+    P0/P1 topics and new topics refresh at once.
+  - Not done yet: write one language and translate on demand (output is written twice today).
+- **Models.** Settings → AI models sets the model and effort per feature (summary, ask, assistant, search, sorting).
+  The Activity window (⌥⌘A) shows runs, tokens, and cost by feature and model.

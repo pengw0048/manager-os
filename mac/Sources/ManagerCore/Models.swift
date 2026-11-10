@@ -84,7 +84,7 @@ public struct Level: Codable, Hashable, Sendable, FetchableRecord, PersistableRe
     public var breaksFocus: Int
 
     public static let defaults: [Level] = [
-        Level(id: "P0", nameEn: "Incident", nameZh: "事故", description: "Active incident or customer impact, or her manager needs it within hours.",
+        Level(id: "P0", nameEn: "Now", nameZh: "立即", description: "Active incident or customer impact, or her manager needs it within hours.",
               color: "#E8436C", notify: "interrupt", firstRemindMinutes: 0, repeatMinutes: 30, breaksFocus: 1),
         Level(id: "P1", nameEn: "Today", nameZh: "今天", description: "Due today or tomorrow, or blocking other people.",
               color: "#E8890C", notify: "silent", firstRemindMinutes: 120, repeatMinutes: 180, breaksFocus: 0),

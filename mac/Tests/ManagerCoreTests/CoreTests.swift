@@ -191,7 +191,7 @@ struct Env {
         await e.queue.idle()
         #expect(TopicOps.reminderDue(e.store.topic(t.id)!))
         // The brief prompt carries her level descriptions.
-        #expect(Prompts.briefSystem(e.store.levels()).contains("P0 = Incident"))
+        #expect(Prompts.briefSystem(e.store.levels()).contains("P0 = Now"))
     }
 
     @Test func peopleExport() throws {

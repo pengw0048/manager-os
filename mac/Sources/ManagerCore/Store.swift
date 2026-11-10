@@ -31,6 +31,13 @@ public final class Store: @unchecked Sendable {
                     }
                 }
             }
+            let sortCols = try Set(db.columns(in: "to_sort").map(\.name))
+            if !sortCols.contains("filed_topic_id") {
+                try db.execute(sql: "alter table to_sort add column filed_topic_id text")
+                try db.execute(sql: "alter table to_sort add column artifact_id text")
+                try db.execute(sql: "alter table to_sort add column filed_by text")
+            }
+            try db.execute(sql: "update levels set name_en = 'Now', name_zh = '立即' where id = 'P0' and name_en = 'Incident' and name_zh = '事故'")
             if try Int.fetchOne(db, sql: "select count(*) from levels") == 0 { for l in Level.defaults { try l.insert(db) } }
         }
     }

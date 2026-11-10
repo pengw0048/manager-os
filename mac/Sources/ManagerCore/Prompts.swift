@@ -40,16 +40,20 @@ public enum Prompts {
 
     public static let triageSchema = #"""
     {"type":"object","properties":{"assignments":{"type":"array","items":{"type":"object","properties":{
-      "item_id":{"type":"string"},"topic_id":{"type":"string","description":"id of the existing topic this belongs to, or \"\" for a new topic"},
+      "item_id":{"type":"string"},"action":{"type":"string","enum":["existing","new","skip"]},
+      "topic_id":{"type":"string","description":"id of the existing topic this belongs to, or \"\" for a new topic"},
       "title_en":{"type":"string","description":"short title for a new topic (also fill when topic_id is set)"},"title_zh":{"type":"string"},
       "reason_en":{"type":"string"},"reason_zh":{"type":"string"}},
-      "required":["item_id","topic_id","title_en","title_zh","reason_en","reason_zh"]}}},
+      "required":["item_id","action","topic_id","title_en","title_zh","reason_en","reason_zh"]}}},
      "required":["assignments"]}
     """#
 
     public static let triageSystem = """
     You sort new Slack conversations for an Engineering Manager into her topics in "Manager OS".
-    For each item, pick the existing topic it clearly belongs to, or "" if it is a new matter. Be conservative: only match when it is the same matter.
+    For each item choose an action:
+    - "existing": it is clearly the same matter as an open topic; set topic_id. Be conservative.
+    - "new": it asks something of her or needs her attention later; topic_id "".
+    - "skip": nothing to do (thanks, acknowledgements, FYI chatter, already resolved); topic_id "".
     Write a short title (en + zh) a new topic would get, and a one-line reason (en + zh). Use topic ids from the list exactly.
     """
 
@@ -62,10 +66,17 @@ public enum Prompts {
             + "\n\n## New Slack conversations\n" + itemText
     }
 
+    /// Always first in the system prompt.
+    public static let base = """
+    You work inside "Manager OS", a local macOS app that helps an Engineering Manager track topics. You have no tools;
+    answer only with the structured output requested.
+    """
+
     static let langRules = """
     Write every text field twice: *_en in English and *_zh in Simplified Chinese with the same content.
     Keep code identifiers, product names, and established English engineering terms unchanged in Chinese.
     Use plain words. Never claim a message was sent: the app never sends messages.
+    Refer to topics by their title in text; ids belong only in id fields. Titles name the matter, not its status (no "overdue", "urgent").
     CLAUDE.md and the knowledge files describe the user (an Engineering Manager), the people around her, and what she already knows; use them.
     """
 
@@ -75,9 +86,9 @@ public enum Prompts {
     You are the background analyst of "Manager OS", a local app that tracks topics for an Engineering Manager.
     You keep the brief of ONE topic current so she can act without re-reading every thread.
     \(langRules)
-    Brief format (Markdown, short):
+    Brief format (Markdown, short; at most about 180 words per language; do not repeat the ask in the facts):
     ## The ask — one or two sentences: what is asked of her, by whom.
-    ## What is known — bullets with facts from the context; name the source.
+    ## What is known — at most 6 bullets with facts from the context; name the source.
     ## Open questions — only if something important is unknown.
     ## Suggested next step — one concrete step.
     ## Draft reply — only if a reply from her is expected.

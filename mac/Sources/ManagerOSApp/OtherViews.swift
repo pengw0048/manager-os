@@ -87,16 +87,6 @@ struct SheetHost: View {
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }.frame(height: 420)
             HStack { Button(m.L("openTerm")) { m.openInTerminal(sid) }; Spacer(); Button(m.L("close")) { dismiss() }.keyboardShortcut(.defaultAction) }
-        case .confirmDelete(let id):
-            Text(m.L("deleteQ")).font(.headline)
-            Text(m.store.topic(id).map(m.title) ?? "").fontWeight(.medium)
-            Text(m.L("deleteD")).font(.callout).foregroundStyle(.secondary)
-            HStack {
-                Spacer()
-                Button(m.L("archive")) { m.archive(id); dismiss() }
-                Button(m.L("cancel")) { dismiss() }.keyboardShortcut(.cancelAction)
-                Button(m.L("delete"), role: .destructive) { m.delete(id); dismiss() }
-            }
         }
     }
 }
@@ -179,22 +169,49 @@ struct KnowledgeView: View {
 struct ActivityView: View {
     @Environment(AppModel.self) var m
     @State private var filter = "all"
+    @State private var days = 1
+    struct Usage: Identifiable { var id: String { kind + model }; var kind: String; var model: String; var runs = 0; var input = 0; var output = 0; var cacheRead = 0; var cacheWrite = 0; var cost = 0.0 }
+    var usage: [Usage] {
+        let since = Calendar.current.date(byAdding: .day, value: -(days - 1), to: Calendar.current.startOfDay(for: Date()))!
+        var by: [String: Usage] = [:]
+        for j in m.jobs where j.status == "done" && (parseISO(j.createdAt) ?? .distantPast) >= since {
+            var u = by[j.kind + "|" + j.model] ?? Usage(kind: j.kind, model: j.model)
+            u.runs += 1; u.input += j.inputTokens ?? 0; u.output += j.outputTokens ?? 0; u.cacheRead += j.cacheRead ?? 0; u.cacheWrite += j.cacheWrite ?? 0; u.cost += j.costUsd ?? 0
+            by[j.kind + "|" + j.model] = u
+        }
+        return by.values.sorted { $0.cost > $1.cost }
+    }
     var body: some View {
-        let todays = m.jobs.filter { localDay(parseISO($0.createdAt) ?? .distantPast) == localDay() && $0.status == "done" }
-        let sum = { (k: KeyPath<Job, Int?>) in todays.reduce(0) { $0 + ($1[keyPath: k] ?? 0) } }
-        let cost = todays.reduce(0) { $0 + ($1.costUsd ?? 0) }
+        let rows = usage
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Text(m.L("ac_today")).font(.headline)
-                HStack(spacing: 10) {
-                    tile(m.L("ac_jobs"), "\(todays.count)", "\(m.jobs.filter { $0.status == "running" }.count) \(m.L("js_running")) · \(m.jobs.filter { $0.status == "queued" }.count) \(m.L("js_queued"))")
-                    tile(m.L("ac_in"), fmtN(sum(\.inputTokens)), nil)
-                    tile(m.L("ac_out"), fmtN(sum(\.outputTokens)), nil)
-                    tile(m.L("ac_cache"), "\(fmtN(sum(\.cacheRead))) / \(fmtN(sum(\.cacheWrite)))", nil)
-                    tile(m.L("ac_cost"), String(format: "$%.2f", cost), m.L("ac_costNote"))
+                HStack {
+                    Text(m.L("usageBy")).font(.headline)
+                    Spacer()
+                    Picker("", selection: $days) { Text(m.L("p_today")).tag(1); Text(m.L("p_7")).tag(7); Text(m.L("p_30")).tag(30) }.pickerStyle(.segmented).labelsHidden().fixedSize()
                 }
+                Grid(alignment: .trailing, horizontalSpacing: 18, verticalSpacing: 6) {
+                    GridRow {
+                        Text(m.L("c_feature")).gridColumnAlignment(.leading); Text(m.L("c_model")).gridColumnAlignment(.leading)
+                        Text(m.L("c_runs")); Text(m.L("ac_in")); Text(m.L("ac_out")); Text(m.L("ac_cache")); Text(m.L("ac_cost"))
+                    }.font(.caption).foregroundStyle(.secondary)
+                    Divider()
+                    ForEach(rows) { u in
+                        GridRow {
+                            Text(m.L("k_" + u.kind)); Text(u.model)
+                            Text("\(u.runs)"); Text(fmtN(u.input)); Text(fmtN(u.output)); Text("\(fmtN(u.cacheRead)) / \(fmtN(u.cacheWrite))"); Text(String(format: "$%.2f", u.cost))
+                        }.font(.callout.monospacedDigit())
+                    }
+                    Divider()
+                    GridRow {
+                        Text("").gridCellColumns(2); Text("\(rows.reduce(0) { $0 + $1.runs })"); Text(fmtN(rows.reduce(0) { $0 + $1.input })); Text(fmtN(rows.reduce(0) { $0 + $1.output }))
+                        Text("\(fmtN(rows.reduce(0) { $0 + $1.cacheRead })) / \(fmtN(rows.reduce(0) { $0 + $1.cacheWrite }))"); Text(String(format: "$%.2f", rows.reduce(0) { $0 + $1.cost }))
+                    }.font(.callout.monospacedDigit().weight(.semibold))
+                }
+                Text(m.L("ac_costNote")).font(.caption).foregroundStyle(.secondary)
+                Text(m.L("recentRuns")).font(.headline).padding(.top, 8)
                 Picker("", selection: $filter) {
-                    Text("All").tag("all"); ForEach(["brief", "chat", "assistant", "search", "triage"], id: \.self) { Text(m.L("k_" + $0)).tag($0) }
+                    Text(m.L("allJobs")).tag("all"); ForEach(JobQueue.kinds, id: \.self) { Text(m.L("k_" + $0)).tag($0) }
                 }.pickerStyle(.segmented).labelsHidden().fixedSize()
                 Table(m.jobs.filter { filter == "all" || $0.kind == filter }.prefix(150).map { $0 }) {
                     TableColumn(m.L("c_time")) { Text(fmtTime($0.createdAt)) }.width(90)
@@ -237,13 +254,7 @@ struct ActivityView: View {
         return by.values.sorted { $0.last > $1.last }
     }
 
-    func tile(_ k: String, _ v: String, _ note: String?) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(k).font(.caption).foregroundStyle(.secondary)
-            Text(v).font(.title2.weight(.semibold).monospacedDigit())
-            if let note { Text(note).font(.caption2).foregroundStyle(.secondary).lineLimit(3) }
-        }.frame(maxWidth: .infinity, alignment: .leading).padding(10).background(RoundedRectangle(cornerRadius: 9).stroke(.quaternary))
-    }
+
 }
 
 struct SettingsView: View {
@@ -264,10 +275,12 @@ struct SettingsView: View {
                 ForEach(m.people) { p in PersonRow(person: p, relationships: relationships, interrupts: interrupts) }
                 Button(m.L("addPerson")) { m.addPerson() }
             } header: { Text(m.L("s_people")) }
+            Section {
+                ForEach(JobQueue.kinds, id: \.self) { ModelRow(kind: $0) }
+            } header: { Text(m.L("s_ai")) } footer: { Text(m.L("s_aiD")).font(.caption).foregroundStyle(.secondary) }
             Section(m.L("s_about")) {
                 Text(m.L("s_aboutD")).font(.caption).foregroundStyle(.secondary)
                 LabeledContent(m.L("s_home"), value: m.home)
-                LabeledContent(m.L("s_models"), value: m.queue.config.model.sorted { $0.key < $1.key }.map { "\($0.key): \($0.value)" }.joined(separator: " · "))
             }
         }.formStyle(.grouped).frame(width: 760, height: 560)
     }
@@ -334,6 +347,7 @@ struct SlackSettings: View {
                 Spacer()
                 Button(m.L("readerOpen")) { m.linkReader.showForSignIn() }
             }
+            Toggle(m.L("autoSortSetting"), isOn: Binding(get: { m.store.setting("auto_sort") != "0" }, set: { m.store.setSetting("auto_sort", $0 ? "1" : "0") }))
             TextField(m.L("slackWatched"), text: $watched).onSubmit { m.slack.setWatched(watched) }
                 .onChange(of: watched) { m.slack.setWatched(watched) }
         } header: { Text(m.L("s_slack")) }
@@ -362,5 +376,30 @@ struct PersonRow: View {
             TextField(m.L("c_notes"), text: $person.notes)
         }
         .onChange(of: person) { m.savePerson(person) }
+    }
+}
+
+/// Model and effort for one AI feature, saved in settings.
+struct ModelRow: View {
+    @Environment(AppModel.self) var m
+    let kind: String
+    @State private var model = ""
+    @State private var effort = ""
+    static let models = ["haiku", "sonnet", "opus"]
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(m.L("k_" + kind))
+                Text(m.L("d_" + kind)).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Picker("", selection: $model) { ForEach(Array(Set(ModelRow.models + [model])).sorted(), id: \.self) { Text($0.capitalized).tag($0) } }
+                .labelsHidden().frame(width: 110)
+                .onChange(of: model) { if model != m.queue.model(kind) { m.store.setSetting("model_\(kind)", model) } }
+            Picker(m.L("effort"), selection: $effort) { ForEach(["low", "medium", "high"], id: \.self) { Text(m.L("e_" + $0)).tag($0) } }
+                .frame(width: 150)
+                .onChange(of: effort) { if effort != m.queue.effort(kind) { m.store.setSetting("effort_\(kind)", effort) } }
+        }
+        .onAppear { model = m.queue.model(kind); effort = m.queue.effort(kind) ?? "low" }
     }
 }

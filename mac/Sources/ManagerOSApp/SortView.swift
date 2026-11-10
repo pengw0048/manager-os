@@ -8,8 +8,16 @@ struct SortView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text(m.L("toSort")).font(.title.weight(.semibold))
-                Text(m.L("toSortHint")).font(.callout).foregroundStyle(.secondary)
+                if m.toSort.isEmpty { Text(m.L("toSortDone")).foregroundStyle(.secondary) }
+                else { Text(m.L("toSortHint")).font(.callout).foregroundStyle(.secondary) }
                 ForEach(m.toSort) { item in SortCard(item: item).id(item.id + (item.triagedAt ?? "")) }
+                if !m.autoSorted.isEmpty {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(m.L("autoSorted")).font(.headline)
+                        Text(m.L("autoSortedHint")).font(.caption).foregroundStyle(.secondary)
+                    }.padding(.top, 12)
+                    ForEach(m.autoSorted) { AutoSortedRow(item: $0) }
+                }
             }
             .padding(.horizontal, 36).padding(.vertical, 28)
             .frame(maxWidth: 860, alignment: .leading).frame(maxWidth: .infinity)
@@ -43,7 +51,7 @@ struct SortCard: View {
             if item.triagedAt == nil {
                 HStack(spacing: 6) { ProgressView().controlSize(.small); Text(m.L("triaging")).font(.caption).foregroundStyle(.secondary) }
             } else if let r = item.prefillReasonEn, !r.isEmpty {
-                Text("✨ " + m.pick(r, item.prefillReasonZh ?? "")).font(.caption).foregroundStyle(.secondary)
+                Text(m.pick(r, item.prefillReasonZh ?? "")).font(.caption).foregroundStyle(.secondary)
             }
             HStack {
                 Picker(m.L("addTo"), selection: $target) {
@@ -60,9 +68,50 @@ struct SortCard: View {
         }
         .padding(14)
         .background(RoundedRectangle(cornerRadius: 10).stroke(.quaternary))
+        .draggable("sort|\(item.id)")
         .onAppear {
             target = item.prefillTopicId ?? "new"
             title = m.pick(item.prefillTitleEn ?? "", item.prefillTitleZh ?? "")
+        }
+    }
+}
+
+/// One conversation that was filed or skipped automatically; drag it onto a topic to move it.
+struct AutoSortedRow: View {
+    @Environment(AppModel.self) var m
+    let item: ToSortItem
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: item.status == "skipped" ? "minus.circle" : "arrow.turn.down.right").foregroundStyle(.secondary).frame(width: 16)
+            Text(item.title).lineLimit(1)
+            if let id = item.filedTopicId, let t = m.store.topic(id) {
+                Text("→").foregroundStyle(.tertiary)
+                Button(m.title(t)) { m.select(id) }.buttonStyle(.link).lineLimit(1)
+            } else if item.status == "skipped" {
+                Text(m.L("skippedLabel")).foregroundStyle(.secondary)
+            }
+            Spacer()
+            if item.status == "skipped" {
+                Button(m.L("backToSort")) { m.restoreSort(item) }.controlSize(.small)
+            } else if let aid = item.artifactId, let from = item.filedTopicId {
+                MoveMenu(exclude: from) { m.moveArtifact(aid, from: from, to: $0) }.fixedSize().controlSize(.small)
+            }
+        }
+        .padding(.vertical, 6).padding(.horizontal, 10)
+        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 7))
+        .draggable("sort|\(item.id)")
+    }
+}
+
+/// Open topics to move something into.
+struct MoveMenu: View {
+    @Environment(AppModel.self) var m
+    let exclude: String
+    let pick: (String) -> Void
+    var body: some View {
+        let rows = m.rows.filter { !$0.topic.isArchived && $0.topic.status != .done && $0.id != exclude }
+        Menu(m.L("moveTo")) {
+            ForEach(rows) { r in Button((r.topic.parentId == nil ? "" : "↳ ") + m.title(r.topic)) { pick(r.id) } }
         }
     }
 }

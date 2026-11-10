@@ -70,7 +70,7 @@ final class SlackController: NSObject {
     private func tick() {
         if !signedIn { checkSignedIn() }
         let briefs = (try? ingest.flush()) ?? []
-        for id in briefs { Task { await queue.enqueueBrief(id, trigger: ("New Slack messages", "新的 Slack 消息")) } }
+        for id in briefs { Task { await queue.briefOnNews(id, trigger: ("New Slack messages", "新的 Slack 消息")) } }
     }
 
     private func triage() async { _ = try? await queue.triage(ingest) }

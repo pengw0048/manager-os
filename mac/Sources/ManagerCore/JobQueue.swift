@@ -8,8 +8,10 @@ public struct AIConfig: Sendable {
         let env = ProcessInfo.processInfo.environment
         func v(_ k: String, _ d: String) -> String { env[k].flatMap { $0.isEmpty ? nil : $0 } ?? d }
         return AIConfig(
-            model: ["brief": v("MOS_MODEL_BRIEF", "sonnet"), "chat": v("MOS_MODEL_CHAT", "sonnet"), "assistant": v("MOS_MODEL_ASSISTANT", "sonnet"), "search": v("MOS_MODEL_SEARCH", "haiku")],
-            effort: ["brief": v("MOS_EFFORT_BRIEF", "low"), "chat": v("MOS_EFFORT_CHAT", "medium"), "assistant": v("MOS_EFFORT_ASSISTANT", "low"), "search": v("MOS_EFFORT_SEARCH", "low")])
+            model: ["brief": v("MOS_MODEL_BRIEF", "sonnet"), "chat": v("MOS_MODEL_CHAT", "sonnet"), "assistant": v("MOS_MODEL_ASSISTANT", "sonnet"),
+                    "search": v("MOS_MODEL_SEARCH", "haiku"), "triage": v("MOS_MODEL_TRIAGE", "haiku")],
+            effort: ["brief": v("MOS_EFFORT_BRIEF", "low"), "chat": v("MOS_EFFORT_CHAT", "medium"), "assistant": v("MOS_EFFORT_ASSISTANT", "low"),
+                     "search": v("MOS_EFFORT_SEARCH", "low"), "triage": v("MOS_EFFORT_TRIAGE", "low")])
     }
 }
 
@@ -41,6 +43,15 @@ public actor JobQueue {
     var triageRunning = false
     var onP0: (@Sendable (Topic) -> Void)?
 
+    public static let kinds = ["brief", "chat", "assistant", "search", "triage"]
+    /// Model and effort per feature: Settings override the defaults (which come from the environment).
+    public nonisolated func model(_ kind: String) -> String {
+        store.setting("model_\(kind)").flatMap { $0.isEmpty ? nil : $0 } ?? config.model[kind] ?? "sonnet"
+    }
+    public nonisolated func effort(_ kind: String) -> String? {
+        store.setting("effort_\(kind)").flatMap { $0.isEmpty ? nil : $0 } ?? config.effort[kind]
+    }
+
     public init(store: Store, home: String, runner: ClaudeRunner = ClaudeRunner(), config: AIConfig = .fromEnvironment(), concurrency: Int = 2) {
         self.store = store; self.home = home; self.runner = runner; self.config = config; self.concurrency = concurrency
         try? store.db.write { db in
@@ -59,25 +70,42 @@ public actor JobQueue {
             try? store.write(topics: [topicId]) { try $0.execute(sql: "update topics set brief_dirty = 1 where id = ?", arguments: [topicId]) }
             return
         }
+        let m_ = model("brief")
         try? store.write(topics: [topicId]) { db in
-            try Job(kind: "brief", topicId: topicId, trigger: trigger, model: config.model["brief"]!).insert(db)
+            try Job(kind: "brief", topicId: topicId, trigger: trigger, model: m_).insert(db)
             try db.execute(sql: "update topics set brief_state = 'queued' where id = ?", arguments: [topicId])
         }
         pump()
     }
 
+    /// New messages on a topic: urgent topics refresh now; others refresh when she next opens them.
+    public func briefOnNews(_ topicId: String, trigger: (String, String)) {
+        guard let t = store.topic(topicId) else { return }
+        if t.urgency == .P0 || t.urgency == .P1 || t.briefEn.isEmpty { enqueueBrief(topicId, trigger: trigger); return }
+        try? store.write(topics: [topicId]) { try $0.execute(sql: "update topics set brief_dirty = 1 where id = ?", arguments: [topicId]) }
+    }
+
+    /// Opening a topic with unread updates refreshes its brief.
+    public func briefIfStale(_ topicId: String) {
+        guard let t = store.topic(topicId), t.briefDirty != 0, t.briefState != "running", t.briefState != "queued" else { return }
+        try? store.write(topics: [topicId]) { try $0.execute(sql: "update topics set brief_dirty = 0 where id = ?", arguments: [topicId]) }
+        enqueueBrief(topicId, trigger: ("Opened with new updates", "打开时有新内容"))
+    }
+
     public func enqueueChat(_ topicId: String, text: String) {
+        let m_ = model("chat")
         try? store.write(topics: [topicId]) { db in
             try Store.addChat(db, ChatRow(topicId: topicId, role: "user", en: text))
-            try Job(kind: "chat", topicId: topicId, trigger: ("Your message in the Claude tab", "你在 Claude 标签页的消息"), model: config.model["chat"]!, payload: json(["text": text])).insert(db)
+            try Job(kind: "chat", topicId: topicId, trigger: ("Your question in the Ask tab", "你在“提问”标签页的问题"), model: m_, payload: json(["text": text])).insert(db)
         }
         pump()
     }
 
     public func enqueueAssistant(_ text: String, page: String?, topicId: String?) {
+        let m_ = model("assistant")
         try? store.write { db in
             try Store.addChat(db, ChatRow(topicId: nil, role: "user", en: text))
-            try Job(kind: "assistant", topicId: nil, trigger: ("Your message to the assistant", "你发给助理的消息"), model: config.model["assistant"]!,
+            try Job(kind: "assistant", topicId: nil, trigger: ("Your message to the assistant", "你发给助理的消息"), model: m_,
                     payload: json(["text": text, "page": page ?? "", "topic_id": topicId ?? ""])).insert(db)
         }
         pump()
@@ -142,7 +170,7 @@ public actor JobQueue {
         let fresh = t.claudeSessionId == nil || t.needsFreshSession != 0 || t.sessionTokens > freshAfterTokens
         let since = fresh ? nil : lastSync(t)
         let req = { (prompt: String, resume: String?) in
-            ClaudeRequest(cwd: self.home, prompt: prompt, schema: schema, model: j.model, effort: self.config.effort[j.kind], systemPrompt: system, resume: resume)
+            ClaudeRequest(cwd: self.home, prompt: prompt, schema: schema, model: j.model, effort: self.effort(j.kind), systemPrompt: system, resume: resume)
         }
         do { return try await runner.run(req(build(since), fresh ? nil : t.claudeSessionId)) }
         catch let e as ClaudeError where !fresh && e.sessionNotFound { return try await runner.run(req(build(nil), nil)) }
@@ -212,7 +240,7 @@ public actor JobQueue {
         let key = "assistant_session_\(localDay())"
         let resume = store.setting(key)
         let prompt = Prompts.assistant(store, message: p["text"] ?? "", page: p["page"], topicId: p["topic_id"].flatMap { $0.isEmpty ? nil : $0 })
-        let req = { (resume: String?) in ClaudeRequest(cwd: self.home, prompt: prompt, schema: Prompts.assistantSchema, model: j.model, effort: self.config.effort["assistant"], systemPrompt: Prompts.assistantSystem, resume: resume) }
+        let req = { (resume: String?) in ClaudeRequest(cwd: self.home, prompt: prompt, schema: Prompts.assistantSchema, model: j.model, effort: self.effort("assistant"), systemPrompt: Prompts.assistantSystem, resume: resume) }
         let r: ClaudeResult
         do { r = try await runner.run(req(resume)) }
         catch let e as ClaudeError where resume != nil && e.sessionNotFound { r = try await runner.run(req(nil)) }
@@ -296,21 +324,31 @@ public actor JobQueue {
         guard !items.isEmpty else { return 0 }
         triageRunning = true
         defer { triageRunning = false }
-        var job = Job(kind: "triage", topicId: nil, trigger: ("\(items.count) Slack conversations to sort", "\(items.count) 个 Slack 对话待归类"), model: config.model["search"]!)
+        var job = Job(kind: "triage", topicId: nil, trigger: ("\(items.count) Slack conversations to sort", "\(items.count) 个 Slack 对话待归类"), model: model("triage"))
         job.status = "running"; job.startedAt = nowISO()
         try store.write { try job.insert($0) }
         do {
             let prompt = Prompts.triage(store, items: items.map { ($0, slack.messages(of: $0.id)) })
             let r = try await runner.run(ClaudeRequest(cwd: home, prompt: prompt, schema: Prompts.triageSchema, model: job.model,
-                                                     effort: config.effort["search"], systemPrompt: Prompts.triageSystem, persist: false))
+                                                     effort: effort("triage"), systemPrompt: Prompts.triageSystem, persist: false))
             try store.write { try finish($0, job, r, topicId: nil) }
             let ids = Set(items.map(\.id))
+            let auto = store.setting("auto_sort") != "0"
+            var briefs: [String] = []
             for a in r.structured["assignments"] as? [[String: Any]] ?? [] {
                 guard let id = a["item_id"] as? String, ids.contains(id) else { continue }
                 let tid = (a["topic_id"] as? String).flatMap { $0.isEmpty || store.topic($0) == nil ? nil : $0 }
-                try slack.savePrefill(id, topicId: tid, titleEn: a["title_en"] as? String ?? "", titleZh: a["title_zh"] as? String ?? "",
-                                      reasonEn: a["reason_en"] as? String ?? "", reasonZh: a["reason_zh"] as? String ?? "")
+                let en = a["title_en"] as? String ?? "", zh = a["title_zh"] as? String ?? ""
+                try slack.savePrefill(id, topicId: tid, titleEn: en, titleZh: zh, reasonEn: a["reason_en"] as? String ?? "", reasonZh: a["reason_zh"] as? String ?? "")
+                guard auto else { continue }
+                switch a["action"] as? String {
+                case "skip": try slack.skip(id)
+                case "existing" where tid != nil: briefs.append(try slack.accept(id, topicId: tid, auto: true))
+                case "new": briefs.append(try slack.accept(id, topicId: nil, newTitle: en, newTitleZh: zh, auto: true))
+                default: break // unsure: stays in To sort with the suggestion filled in
+                }
             }
+            for t in Set(briefs) { briefOnNews(t, trigger: ("Slack conversation filed", "归入了 Slack 对话")) }
             for it in items where try store.read({ try String.fetchOne($0, sql: "select triaged_at from to_sort where id = ?", arguments: [it.id]) }) == nil {
                 try slack.savePrefill(it.id, topicId: nil, titleEn: it.title, titleZh: it.title, reasonEn: "", reasonZh: "")
             }
@@ -324,12 +362,12 @@ public actor JobQueue {
 
     /// AI search: one call with the topic index as the system prompt and the query as the message.
     public func aiSearch(_ query: String, includeArchived: Bool = false) async throws -> AISearchAnswer {
-        var job = Job(kind: "search", topicId: nil, trigger: ("Search: \(query.prefix(60))", "搜索：\(query.prefix(60))"), model: config.model["search"]!)
+        var job = Job(kind: "search", topicId: nil, trigger: ("Search: \(query.prefix(60))", "搜索：\(query.prefix(60))"), model: model("search"))
         job.status = "running"; job.startedAt = nowISO()
         try store.write { try job.insert($0) }
         do {
             let r = try await runner.run(ClaudeRequest(cwd: home, prompt: "Query: \(query)", schema: Prompts.searchSchema, model: job.model,
-                                                     effort: config.effort["search"], systemPrompt: Prompts.searchIndex(store, query: query, includeArchived: includeArchived), persist: false))
+                                                     effort: effort("search"), systemPrompt: Prompts.searchIndex(store, query: query, includeArchived: includeArchived), persist: false))
             try store.write { try finish($0, job, r, topicId: nil) }
             let hits = (r.structured["hits"] as? [[String: Any]] ?? []).compactMap { h -> AISearchAnswer.Hit? in
                 guard let id = h["topic_id"] as? String, store.topic(id) != nil else { return nil }

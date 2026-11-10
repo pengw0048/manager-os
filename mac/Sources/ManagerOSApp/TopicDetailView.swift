@@ -10,6 +10,7 @@ struct TopicDetailView: View {
     @State private var ctxTitle = ""
     @State private var ctxUrl = ""
     @State private var ctxBody = ""
+    @State private var addingCtx = false
     @FocusState private var chatFocused: Bool
 
     var t: Topic { d.topic }
@@ -80,13 +81,14 @@ struct TopicDetailView: View {
     var urgencyCell: some View {
         HStack(spacing: 3) {
             ForEach(Urgency.allCases, id: \.self) { u in
-                Button { m.patch(t.id) { $0.urgency = u } } label: { Text(m.levelName(u)).fixedSize() }.help(m.level(u).description)
+                Button { m.patch(t.id) { $0.urgency = u } } label: { Text(m.levelName(u)).fixedSize() }
+                    .help(t.urgency == u && t.urgencySource == "auto" && !m.pick(t.urgencyReasonEn, t.urgencyReasonZh).isEmpty ? m.pick(t.urgencyReasonEn, t.urgencyReasonZh) : m.level(u).description)
                     .buttonStyle(.plain).font(.caption.weight(.bold)).padding(.horizontal, 7).padding(.vertical, 3)
                     .background(t.urgency == u ? u.color : Color.clear, in: RoundedRectangle(cornerRadius: 5))
                     .foregroundStyle(t.urgency == u ? Color.white : Color.secondary)
                     .overlay(RoundedRectangle(cornerRadius: 5).stroke(.quaternary))
             }
-            if t.urgencySource == "auto" { Text(m.L("auto")).font(.caption).foregroundStyle(.secondary).padding(.leading, 4) }
+            if t.urgencySource == "auto" { Text(m.L("auto")).font(.caption).foregroundStyle(.secondary).fixedSize().padding(.leading, 4) }
             else {
                 Text(m.L("manualUntil")).font(.caption).foregroundStyle(.secondary).padding(.leading, 4)
                 OptionalDate(value: t.urgencyPinnedUntil) { v in m.patch(t.id) { $0.urgencyPinnedUntil = .some(v) } }
@@ -118,13 +120,21 @@ struct TopicDetailView: View {
         .padding(10).background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
     }
 
-    var reasonLine: some View {
-        let reason = m.pick(t.urgencyReasonEn, t.urgencyReasonZh)
-        return VStack(alignment: .leading, spacing: 2) {
-            if t.urgencySource == "auto" { if !reason.isEmpty { Text("\(m.L("auto")): \(reason)") } }
-            else if let ai = t.aiUrgency, ai != t.urgency { Text("\(m.L("aiWould")) \(m.levelName(ai)): \(reason)").foregroundStyle(Color.accentColor) }
-            if let due = t.dueAt { Text("\(m.L("due")): \(due.prefix(16).replacingOccurrences(of: "T", with: " "))") }
-        }.font(.caption).foregroundStyle(.secondary)
+    /// The due date, and a different suggested level when she set urgency by hand (reason on hover).
+    @ViewBuilder var reasonLine: some View {
+        let suggest = t.urgencySource != "auto" ? t.aiUrgency.flatMap { $0 != t.urgency ? $0 : nil } : nil
+        if t.dueAt != nil || suggest != nil {
+            HStack(spacing: 14) {
+                if let due = t.dueAt {
+                    let late = (parseISO(due) ?? .distantFuture) < Date()
+                    Label("\(m.L("dueAt")) \(due.prefix(16).replacingOccurrences(of: "T", with: " "))", systemImage: "calendar")
+                        .foregroundStyle(late ? Color.red : Color.secondary)
+                }
+                if let ai = suggest {
+                    Text("\(m.L("aiWould")): \(m.levelName(ai))").help(m.pick(t.urgencyReasonEn, t.urgencyReasonZh))
+                }
+            }.font(.caption).foregroundStyle(.secondary)
+        }
     }
 
     var aiLine: some View {
@@ -135,20 +145,11 @@ struct TopicDetailView: View {
             case "error": Text(m.L("briefError")).foregroundStyle(.red); Button(m.L("retry")) { m.refreshBrief(t.id) }.buttonStyle(.link)
             default: EmptyView()
             }
-            if let s = d.currentSession {
-                Button("\(m.L("session")) \(s.id.prefix(8)) · \(s.jobs) \(m.L("jobsN")) · $\(String(format: "%.2f", s.cost))") { m.page = .activity }.buttonStyle(.link)
-            }
-            if t.briefState == "idle" { Button(m.L("refresh")) { m.refreshBrief(t.id) }.buttonStyle(.link) }
         }.font(.caption).foregroundStyle(.secondary)
     }
 
     @ViewBuilder var subtopics: some View {
-        if d.children.isEmpty {
-            Button { m.sheet = .newTopic(parent: t.id) } label: { Label(m.L("addSub"), systemImage: "plus") }
-                .buttonStyle(.link).font(.caption)
-        } else {
-            subtopicList
-        }
+        if !d.children.isEmpty { subtopicList }
     }
 
     var subtopicList: some View {
@@ -170,10 +171,9 @@ struct TopicDetailView: View {
 
     @ViewBuilder var brief: some View {
         let b = m.pick(t.briefEn, t.briefZh)
-        if !b.isEmpty { MarkdownText(text: b) }
+        if !b.isEmpty { BriefView(text: b) }
         else if t.briefState == "idle" || t.briefState == "error" { Text(m.L("noBrief")).foregroundStyle(.secondary) }
         else { HStack { ProgressView().controlSize(.small); Text(m.L("writing")).foregroundStyle(.secondary) } }
-        Button { m.tab = .claude } label: { Label(m.L("ask"), systemImage: "bubble.left") }.padding(.top, 12)
     }
 
     @ViewBuilder var context: some View {
@@ -182,7 +182,12 @@ struct TopicDetailView: View {
                      title: a.title.isEmpty ? (a.url ?? "Note") : a.title,
                      subtitle: m.pick(a.summaryEn, a.summaryZh).isEmpty ? String(a.content.prefix(160)) : m.pick(a.summaryEn, a.summaryZh),
                      raw: a.content.isEmpty ? nil : a.content, url: a.url, when: nil)
+            .draggable("artifact|\(a.id)|\(t.id)")
+            .contextMenu { MoveMenu(exclude: t.id) { m.moveArtifact(a.id, from: t.id, to: $0) } }
         }
+        if !addingCtx {
+            Button { addingCtx = true } label: { Label(m.L("addSource"), systemImage: "plus") }.padding(.top, 8)
+        } else {
         GroupBox(m.L("addCtx")) {
             VStack(alignment: .leading) {
                 TextField(m.L("ctxTitle"), text: $ctxTitle)
@@ -190,20 +195,24 @@ struct TopicDetailView: View {
                 TextEditor(text: $ctxBody).frame(minHeight: 70).font(.body).overlay(alignment: .topLeading) {
                     if ctxBody.isEmpty { Text(m.L("ctxBody")).foregroundStyle(.tertiary).padding(5).allowsHitTesting(false) }
                 }
-                Button(m.L("addCtx")) {
-                    m.addContext(t.id, title: ctxTitle, url: ctxUrl, content: ctxBody); ctxTitle = ""; ctxUrl = ""; ctxBody = ""
-                }.disabled(ctxUrl.isEmpty && ctxBody.isEmpty)
+                HStack {
+                    Button(m.L("cancel")) { addingCtx = false }
+                    Button(m.L("addCtx")) {
+                        m.addContext(t.id, title: ctxTitle, url: ctxUrl, content: ctxBody); ctxTitle = ""; ctxUrl = ""; ctxBody = ""; addingCtx = false
+                    }.disabled(ctxUrl.isEmpty && ctxBody.isEmpty).keyboardShortcut(.defaultAction)
+                }
             }.padding(4)
         }.padding(.top, 8)
+        }
     }
 
     @ViewBuilder var timeline: some View {
-        ForEach(d.timeline) { e in
-            EntryRow(key: "e:\(e.id ?? 0)", icon: ["me": "person", "claude": "sparkles", "slack": "number", "zoom": "video"][e.actor] ?? "circle",
-                     title: m.pick(e.summaryEn, e.summaryZh), subtitle: nil, raw: e.raw, url: e.sourceUrl, when: fmtTime(e.at),
-                     runAction: e.actor == "claude" && e.jobId != nil ? { m.tab = .claude; if let c = d.chat.first(where: { $0.jobId == e.jobId }) { m.expanded.insert("r:\(c.id ?? 0)") } } : nil)
+        let entries = d.timeline.filter { $0.kind != "brief" }
+        ForEach(entries) { e in
+            EntryRow(key: "e:\(e.id ?? 0)", icon: e.kind == "urgency" ? "arrow.up.arrow.down" : ["me": "person", "slack": "number", "zoom": "video"][e.actor] ?? "circle",
+                     title: m.pick(e.summaryEn, e.summaryZh), subtitle: nil, raw: e.raw, url: e.sourceUrl, when: fmtTime(e.at))
         }
-        if d.timeline.isEmpty { Text(m.L("empty")).foregroundStyle(.secondary) }
+        if entries.isEmpty { Text(m.L("empty")).foregroundStyle(.secondary) }
     }
 
     @ViewBuilder func claude(_ proxy: ScrollViewProxy) -> some View {
@@ -295,20 +304,14 @@ struct RunCard: View {
     var body: some View {
         let key = "r:\(row.id ?? 0)", open = m.expanded.contains(key)
         VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Image(systemName: open ? "chevron.down" : "chevron.right").font(.caption2)
-                Text("\(fmtTime(row.at))  ⚙ \(m.pick(row.textEn, row.textZh))")
-                Spacer()
-                if let j = job, let ms = j.durationMs { Text("\(ms / 1000) s · $\(String(format: "%.2f", j.costUsd ?? 0))") }
-            }
+            Text("\(fmtTime(row.at)) · \(m.pick(row.textEn, row.textZh))")
             if open, let j = job {
-                Text("\(j.model) · in \(fmtN(j.inputTokens)) · out \(fmtN(j.outputTokens)) · cache read \(fmtN(j.cacheRead)) · cache write \(fmtN(j.cacheWrite))\nsession \(j.sessionId ?? "")")
+                Text("\(j.model) · \((j.durationMs ?? 0) / 1000) s · $\(String(format: "%.2f", j.costUsd ?? 0)) · in \(fmtN(j.inputTokens)) · out \(fmtN(j.outputTokens)) · cache \(fmtN(j.cacheRead)) / \(fmtN(j.cacheWrite))")
                     .textSelection(.enabled)
-                if let sid = j.sessionId { Button(m.L("viewT")) { m.sheet = .transcript(sid) } }
+                if let sid = j.sessionId { Button(m.L("viewT")) { m.sheet = .transcript(sid) }.buttonStyle(.link) }
             }
         }
-        .font(.caption).foregroundStyle(.secondary).padding(8)
-        .background(RoundedRectangle(cornerRadius: 8).strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4])).foregroundStyle(.quaternary))
+        .font(.caption).foregroundStyle(.tertiary)
         .contentShape(Rectangle())
         .onTapGesture { if open { m.expanded.remove(key) } else { m.expanded.insert(key) } }
     }
@@ -327,7 +330,7 @@ struct ActionList: View {
                 HStack { Text("✓ \(text)"); Button(m.L("undo")) { m.undo(row, i) }.buttonStyle(.link) }.font(.caption).foregroundStyle(.secondary)
             case "pending":
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(text + (a.value.isEmpty ? "" : "  \(a.value)"))
+                    Text(text + (a.value.isEmpty || text.contains(a.value) ? "" : "  \(a.value)"))
                     if let tid = a.topicId, !tid.isEmpty, let t = m.store.topic(tid) { Text("→ \(m.title(t))").font(.caption).foregroundStyle(.secondary) }
                     HStack { Button(m.L("confirm")) { m.confirm(row, i, true) }.buttonStyle(.borderedProminent); Button(m.L("cancel")) { m.confirm(row, i, false) } }
                 }.padding(8).background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
@@ -417,5 +420,62 @@ struct MarkdownText: View {
     }
     func inline(_ s: String) -> AttributedString {
         (try? AttributedString(markdown: s, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(s)
+    }
+}
+
+/// The summary in sections: the ask and the next step stay open, facts and questions fold, the draft reply can be copied.
+struct BriefView: View {
+    @Environment(AppModel.self) var m
+    let text: String
+    @State private var copied = false
+
+    struct Section: Identifiable { let id: Int; let heading: String; let body: String }
+
+    var sections: [Section] {
+        var out: [Section] = [], heading = "", lines: [String] = []
+        func flush() { if !heading.isEmpty || !lines.joined().trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { out.append(Section(id: out.count, heading: heading, body: lines.joined(separator: "\n").trimmingCharacters(in: .newlines))) } }
+        for l in text.components(separatedBy: "\n") {
+            if l.hasPrefix("#") { flush(); heading = l.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces); lines = [] } else { lines.append(l) }
+        }
+        flush()
+        return out
+    }
+
+    static func kind(_ h: String) -> String {
+        let s = h.lowercased()
+        if ["known", "已知"].contains(where: s.contains) { return "fold" }
+        if ["open question", "待确认", "问题"].contains(where: s.contains) { return "fold" }
+        if ["draft", "草稿"].contains(where: s.contains) { return "draft" }
+        return "open"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(sections) { sec in
+                switch BriefView.kind(sec.heading) {
+                case "fold":
+                    DisclosureGroup { MarkdownText(text: sec.body).padding(.top, 4) } label: {
+                        Text(sec.heading).font(.callout.weight(.semibold)).foregroundStyle(.secondary)
+                    }
+                case "draft":
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(sec.heading).font(.callout.weight(.semibold)).foregroundStyle(.secondary)
+                            Spacer()
+                            Button(copied ? m.L("copied") : m.L("copy")) {
+                                NSPasteboard.general.clearContents(); NSPasteboard.general.setString(sec.body, forType: .string); copied = true
+                            }.controlSize(.small)
+                        }
+                        MarkdownText(text: sec.body).padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+                    }
+                default:
+                    VStack(alignment: .leading, spacing: 4) {
+                        if !sec.heading.isEmpty { Text(sec.heading).font(.callout.weight(.semibold)).foregroundStyle(.secondary) }
+                        MarkdownText(text: sec.body)
+                    }
+                }
+            }
+        }
     }
 }

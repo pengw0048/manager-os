@@ -150,6 +150,7 @@ import GRDB
 
     @Test func triagePrefillsTargets() async throws {
         let (e, s) = try setup()
+        e.store.setSetting("auto_sort", "0")
         let t = try TopicOps.create(e.store, title: "Existing")
         _ = try s.ingest(ev("D1", "1.0"), now: Date().addingTimeInterval(-120))
         _ = try s.ingest(ev("C1", "2.0", text: "<@U_ME> new thing"), now: Date().addingTimeInterval(-120))
@@ -158,5 +159,49 @@ import GRDB
         #expect(items.compactMap(\.prefillTopicId) == [t.id])
         #expect(items.allSatisfy { $0.triagedAt != nil })
         #expect(try await e.queue.triage(s) == 0)
+    }
+
+    @Test func autoSortFilesSkipsAndCanBeMoved() async throws {
+        let (e, s) = try setup()
+        let a = try TopicOps.create(e.store, title: "Existing")
+        let b = try TopicOps.create(e.store, title: "Other")
+        _ = try s.ingest(ev("D1", "1.0", text: "about the existing thing"), now: Date().addingTimeInterval(-120))
+        _ = try s.ingest(ev("C1", "2.0", text: "<@U_ME> new thing"), now: Date().addingTimeInterval(-120))
+        _ = try s.ingest(ev("D2", "3.0", text: "thanks!"), now: Date().addingTimeInterval(-120))
+        #expect(try await e.queue.triage(s) == 3)
+        #expect(s.pendingItems().isEmpty)
+        let recent = s.recentAuto()
+        #expect(recent.count == 3)
+        // The fake model files the first item into whichever topic it lists first.
+        let filed = try #require(recent.first { $0.filedTopicId == a.id || $0.filedTopicId == b.id })
+        let (from, to) = filed.filedTopicId == a.id ? (a.id, b.id) : (b.id, a.id)
+        #expect(recent.contains { $0.filedBy == "auto" && $0.filedTopicId != a.id && $0.filedTopicId != b.id && $0.filedTopicId != nil })
+        let skipped = try #require(recent.first { $0.status == "skipped" })
+        try s.restore(skipped.id)
+        #expect(s.pendingItems().map(\.id) == [skipped.id])
+
+        // Filed to the wrong topic: move the conversation; later replies follow it.
+        try TopicOps.moveArtifact(e.store, try #require(filed.artifactId), from: from, to: to)
+        #expect(e.store.artifacts(of: to).contains { $0.type == "slack_thread" })
+        #expect(!e.store.artifacts(of: from).contains { $0.type == "slack_thread" })
+        #expect(try s.ingest(ev("D1", "1.5", thread: "1.0", text: "any update?")) == .stored(topicId: to))
+        #expect(try e.store.read { try Int.fetchOne($0, sql: "select needs_fresh_session from topics where id = ?", arguments: [from]) } == 1)
+        #expect(s.recentAuto().first { $0.id == filed.id }?.filedTopicId == to)
+        await e.queue.idle()
+    }
+
+    @Test func lowUrgencyBriefsWaitUntilOpened() async throws {
+        let (e, _) = try setup()
+        let t = try TopicOps.create(e.store, title: "Doc review")
+        await e.queue.enqueueBrief(t.id, trigger: ("t", "t")); await e.queue.idle()
+        var p = TopicPatch(); p.urgency = .P3; try TopicOps.patch(e.store, t.id, p)
+        let jobs = { try e.store.read { try Int.fetchOne($0, sql: "select count(*) from jobs where kind = 'brief' and topic_id = ?", arguments: [t.id]) } ?? 0 }
+        let before = try jobs()
+        await e.queue.briefOnNews(t.id, trigger: ("news", "news"))
+        #expect(try jobs() == before)
+        #expect(e.store.topic(t.id)?.briefDirty == 1)
+        await e.queue.briefIfStale(t.id); await e.queue.idle()
+        #expect(try jobs() == before + 1)
+        #expect(e.store.topic(t.id)?.briefDirty == 0)
     }
 }

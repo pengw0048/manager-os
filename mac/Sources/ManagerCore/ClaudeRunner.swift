@@ -48,7 +48,8 @@ public struct ClaudeRunner: Sendable {
     private func once(_ r: ClaudeRequest) async throws -> ClaudeResult {
         var args = ["-p", "--output-format", "json", "--model", r.model, "--json-schema", r.schema,
                     "--tools", "", "--strict-mcp-config", "--disable-slash-commands", "--setting-sources", "project"]
-        if let s = r.systemPrompt { args += ["--append-system-prompt", s] }
+        // Replaces Claude Code's default coding prompt (~8.5k tokens per call) with ours.
+        args += ["--system-prompt", Prompts.base + (r.systemPrompt.map { "\n\n" + $0 } ?? "")]
         if let e = r.effort { args += ["--effort", e] }
         if let s = r.resume { args += ["--resume", s] }
         if !r.persist { args.append("--no-session-persistence") }

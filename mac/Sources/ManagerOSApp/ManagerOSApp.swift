@@ -70,17 +70,16 @@ enum TitlebarDoubleClick {
             return
         }
         if ProcessInfo.processInfo.environment["MOS_DEBUG_SETTINGS"] == "1" {
-            // The Settings scene cannot be opened from here, so host the same view in a plain window.
-            let w = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 760, height: 560), styleMask: [.titled], backing: .buffered, defer: false)
-            w.contentView = NSHostingView(rootView: SettingsView().environment(m)); w.makeKeyAndOrderFront(nil); await wait(2)
-            func scrolls(_ v: NSView) -> [NSScrollView] { (v as? NSScrollView).map { [$0] } ?? v.subviews.flatMap(scrolls) }
-            if let sv = w.contentView.flatMap(scrolls)?.max(by: { $0.frame.height < $1.frame.height }),
-               let doc = sv.documentView {
-                let h = doc.bounds.height, step = sv.contentView.bounds.height
-                var y: CGFloat = 0, i = 0
-                while y < h { sv.contentView.scroll(to: NSPoint(x: 0, y: y)); await wait(0.6); i += 1
-                    if let v = w.contentView, let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) { v.cacheDisplay(in: v.bounds, to: rep); try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "\(dir)/settings-\(i).png")) }
-                    y += step }
+            // The Settings scene cannot be opened from here, so host the same view in a plain window, one pane at a time.
+            let w = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 640, height: 560), styleMask: [.titled], backing: .buffered, defer: false)
+            w.contentView = NSHostingView(rootView: SettingsView().environment(m)); w.makeKeyAndOrderFront(nil)
+            for pane in ["general", "slack", "levels", "people", "ai"] {
+                UserDefaults.standard.set(pane, forKey: "settingsPane"); await wait(1.5)
+                if let v = w.contentView, let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) { v.cacheDisplay(in: v.bounds, to: rep); try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "\(dir)/settings-\(pane).png")) }
+            }
+            for (name, view) in [("level", AnyView(LevelSheet(level: m.levels[min(1, m.levels.count - 1)]))), ("person", AnyView(PersonSheet(person: m.people.first ?? Person(name: ""))))] {
+                w.contentView = NSHostingView(rootView: Color.clear.frame(width: 640, height: 560).sheet(isPresented: .constant(true)) { view.environment(m) }.environment(m)); await wait(2)
+                if let v = (w.attachedSheet ?? w).contentView?.superview, let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) { v.cacheDisplay(in: v.bounds, to: rep); try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "\(dir)/settings-sheet-\(name).png")) }
             }
             return
         }

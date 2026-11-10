@@ -6,9 +6,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        TitlebarDoubleClick.install()
         #if DEBUG
         if let dir = ProcessInfo.processInfo.environment["MOS_SNAPSHOTS"] { Task { @MainActor in await DebugSnapshots.run(dir: dir) } }
         #endif
+    }
+}
+
+/// A hidden toolbar background stops AppKit's title-bar double-click, so handle it here with the user's system setting.
+enum TitlebarDoubleClick {
+    static func install() {
+        NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { e in
+            guard e.clickCount == 2, let w = e.window, w.styleMask.contains(.titled), !w.styleMask.contains(.fullScreen),
+                  e.locationInWindow.y >= w.contentLayoutRect.maxY, !onControl(w, e.locationInWindow) else { return e }
+            switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
+            case "Minimize": w.miniaturize(nil)
+            case "None": break
+            default: w.zoom(nil)
+            }
+            return nil
+        }
+    }
+
+    static func onControl(_ w: NSWindow, _ p: NSPoint) -> Bool {
+        var v = w.contentView?.superview?.hitTest(p)
+        while let cur = v {
+            if cur is NSControl || NSStringFromClass(type(of: cur)).contains("ToolbarItemView") { return true }
+            v = cur.superview
+        }
+        return false
     }
 }
 
@@ -26,6 +52,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         await wait(3)
         guard let m = AppModel.shared else { return }
+        if let xs = ProcessInfo.processInfo.environment["MOS_DEBUG_ZOOM"]?.split(separator: ",").compactMap({ Double($0) }), let w = main() {
+            w.setFrame(NSRect(x: 80, y: 80, width: 1000, height: 700), display: true); await wait(1)
+            for x in xs.map({ CGFloat($0) }) { // empty toolbar space over the detail column, then over the sidebar
+                let before = w.frame
+                let p = NSPoint(x: x, y: w.frame.height - 20)
+                for n in [1, 2] {
+                    for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                        if let e = NSEvent.mouseEvent(with: type, location: p, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                      windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: n, pressure: 1) { NSApp.sendEvent(e) }
+                    }
+                }
+                await wait(1.5)
+                print("[zoom] x=\(Int(x)) \(before) -> \(w.frame)"); fflush(stdout)
+                w.setFrame(before, display: true); await wait(1)
+            }
+            return
+        }
         if let link = ProcessInfo.processInfo.environment["MOS_DEBUG_LINK"] {
             m.createTopic(title: "", text: "", url: link, requester: "", parent: nil)
             await wait(12); shot("link-context-before-brief"); m.tab = .ctx; await wait(1); shot("link-context")
@@ -290,3 +333,4 @@ struct SearchResultsView: View {
         }
     }
 }
+

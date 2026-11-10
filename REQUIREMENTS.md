@@ -639,6 +639,8 @@ M0 is useful on day one before any source integration exists.
   - Summaries are capped at about 180 words per language.
   - New messages on P2/P3 topics only mark the summary stale; it refreshes when she opens the topic.
     P0/P1 topics and new topics refresh at once.
-  - Not done yet: write one language and translate on demand (output is written twice today).
+  - What she reads (summary, replies, answers, reasons) is written once, in Chinese; anything meant for other
+    people (draft replies) is in English. Titles stay in both languages. A real brief after this: 702 output
+    tokens, $0.014, 7.7 s.
 - **Models.** Settings → AI models sets the model and effort per feature (summary, ask, assistant, search, sorting).
   The Activity window (⌥⌘A) shows runs, tokens, and cost by feature and model.

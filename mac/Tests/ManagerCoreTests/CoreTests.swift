@@ -40,7 +40,7 @@ struct Env {
         #expect(after.titleEn == "Fake title")
         #expect(after.urgency == .P0)
         #expect(after.briefState == "idle")
-        #expect(e.store.artifacts(of: t.id).first?.summaryEn.hasPrefix("sum a_") == true)
+        #expect(e.store.artifacts(of: t.id).first?.summaryZh.hasPrefix("摘要 a_") == true)
         #expect(e.calls.last?["resume"] == nil)
 
         _ = try TopicOps.addContext(e.store, topicId: t.id, title: "", url: "", content: "Hotfix ETA 40 min")
@@ -285,7 +285,8 @@ struct Env {
         #expect(store.jobs(of: t.id).last?.sessionId == after.claudeSessionId)
         let hits = try await queue.aiSearch("API 下线日期")
         #expect(hits.hits.map(\.topicId) == [t.id])
-        print("REAL:", after.titleEn, "|", after.urgency.rawValue, "|", store.jobs().map { "\($0.kind) \($0.durationMs ?? 0)ms $\($0.costUsd ?? 0)" })
+        print("REAL:", after.titleEn, "|", after.urgency.rawValue, "|", store.jobs().map { "\($0.kind) \($0.durationMs ?? 0)ms out \($0.outputTokens ?? 0) $\($0.costUsd ?? 0)" })
+        print("REAL BRIEF:\n" + after.briefZh)
     }
 
     @Test func aiSearchReturnsKnownTopicsAndLogsJob() async throws {

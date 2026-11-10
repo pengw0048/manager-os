@@ -66,7 +66,8 @@ public struct ClaudeRunner: Sendable {
         }
         var structured = res["structured_output"] as? [String: Any]
         if structured == nil, let s = res["result"] as? String { structured = (try? JSONSerialization.jsonObject(with: Data(s.utf8))) as? [String: Any] }
-        guard let structured else { throw ClaudeError(message: "missing structured_output") }
+        guard var structured else { throw ClaudeError(message: "missing structured_output") }
+        structured = ClaudeRunner.bothLanguages(structured) as? [String: Any] ?? structured
         let u = res["usage"] as? [String: Any] ?? [:]
         let i = { (k: String) in (u[k] as? NSNumber)?.intValue ?? 0 }
         return ClaudeResult(
@@ -76,6 +77,16 @@ public struct ClaudeRunner: Sendable {
     }
 
     /// Runs a process, writes stdin, and reads stdout/stderr concurrently so large output cannot block the pipe.
+    /// Long fields come back once (in Chinese); the app stores them in both language slots, e.g. "brief" → brief_en + brief_zh.
+    static let singleFields: Set<String> = ["brief", "urgency_reason", "summary", "reply", "answer", "reason"]
+    static func bothLanguages(_ v: Any) -> Any {
+        if let a = v as? [Any] { return a.map(bothLanguages) }
+        guard var d = v as? [String: Any] else { return v }
+        for (k, x) in d { d[k] = bothLanguages(x) }
+        for k in singleFields { if let x = d[k] as? String { d[k + "_en"] = d[k + "_en"] ?? x; d[k + "_zh"] = d[k + "_zh"] ?? x } }
+        return d
+    }
+
     static func exec(_ bin: String, _ args: [String], cwd: String, stdin: String, timeout: TimeInterval) async throws -> (String, String, Int32) {
         try await withCheckedThrowingContinuation { cont in
             let p = Process()

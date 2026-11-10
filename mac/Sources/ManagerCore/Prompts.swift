@@ -3,39 +3,39 @@ import Foundation
 public enum Prompts {
     public static let briefSchema = #"""
     {"type":"object","properties":{
-      "title_en":{"type":"string"},"title_zh":{"type":"string"},"brief_en":{"type":"string"},"brief_zh":{"type":"string"},
-      "urgency":{"type":"string","enum":["P0","P1","P2","P3"]},"urgency_reason_en":{"type":"string"},"urgency_reason_zh":{"type":"string"},
+      "title_en":{"type":"string"},"title_zh":{"type":"string"},"brief":{"type":"string"},
+      "urgency":{"type":"string","enum":["P0","P1","P2","P3"]},"urgency_reason":{"type":"string"},
       "due_at":{"type":["string","null"],"description":"ISO date or datetime if a deadline is stated or clearly implied, else null"},
       "requester":{"type":["string","null"],"description":"Name of the person asking, if known"},
-      "artifact_summaries":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"summary_en":{"type":"string"},"summary_zh":{"type":"string"}},"required":["id","summary_en","summary_zh"]}}},
-     "required":["title_en","title_zh","brief_en","brief_zh","urgency","urgency_reason_en","urgency_reason_zh","due_at","requester","artifact_summaries"]}
+      "artifact_summaries":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"summary":{"type":"string"}},"required":["id","summary"]}}},
+     "required":["title_en","title_zh","brief","urgency","urgency_reason","due_at","requester","artifact_summaries"]}
     """#
 
     public static let chatSchema = #"""
-    {"type":"object","properties":{"reply_en":{"type":"string"},"reply_zh":{"type":"string"},
+    {"type":"object","properties":{"reply":{"type":"string"},
       "actions":{"type":"array","items":{"type":"object","properties":{
         "type":{"type":"string","enum":["add_timeline","add_note","create_subtopic","set_status","set_urgency","set_followup"]},
         "text_en":{"type":"string"},"text_zh":{"type":"string"},
         "value":{"type":"string","description":"set_status: needs_me|waiting|snoozed|done; set_urgency: P0-P3; set_followup: YYYY-MM-DD or YYYY-MM-DDTHH:MM local time"}},
         "required":["type","text_en","text_zh","value"]}}},
-     "required":["reply_en","reply_zh","actions"]}
+     "required":["reply","actions"]}
     """#
 
     public static let assistantSchema = #"""
-    {"type":"object","properties":{"reply_en":{"type":"string"},"reply_zh":{"type":"string"},
+    {"type":"object","properties":{"reply":{"type":"string"},
       "topic_links":{"type":"array","items":{"type":"string"},"description":"ids of topics the reply refers to"},
       "actions":{"type":"array","items":{"type":"object","properties":{
         "type":{"type":"string","enum":["create_topic","set_status","set_urgency","set_followup","add_note"]},
         "topic_id":{"type":"string"},"text_en":{"type":"string"},"text_zh":{"type":"string"},"value":{"type":"string"}},
         "required":["type","topic_id","text_en","text_zh","value"]}}},
-     "required":["reply_en","reply_zh","topic_links","actions"]}
+     "required":["reply","topic_links","actions"]}
     """#
 
     public static let searchSchema = #"""
-    {"type":"object","properties":{"answer_en":{"type":"string"},"answer_zh":{"type":"string"},
-      "hits":{"type":"array","items":{"type":"object","properties":{"topic_id":{"type":"string"},"reason_en":{"type":"string"},"reason_zh":{"type":"string"}},
-        "required":["topic_id","reason_en","reason_zh"]}}},
-     "required":["answer_en","answer_zh","hits"]}
+    {"type":"object","properties":{"answer":{"type":"string"},
+      "hits":{"type":"array","items":{"type":"object","properties":{"topic_id":{"type":"string"},"reason":{"type":"string"}},
+        "required":["topic_id","reason"]}}},
+     "required":["answer","hits"]}
     """#
 
     public static let triageSchema = #"""
@@ -43,8 +43,8 @@ public enum Prompts {
       "item_id":{"type":"string"},"action":{"type":"string","enum":["existing","new","skip"]},
       "topic_id":{"type":"string","description":"id of the existing topic this belongs to, or \"\" for a new topic"},
       "title_en":{"type":"string","description":"short title for a new topic (also fill when topic_id is set)"},"title_zh":{"type":"string"},
-      "reason_en":{"type":"string"},"reason_zh":{"type":"string"}},
-      "required":["item_id","action","topic_id","title_en","title_zh","reason_en","reason_zh"]}}},
+      "reason":{"type":"string"}},
+      "required":["item_id","action","topic_id","title_en","title_zh","reason"]}}},
      "required":["assignments"]}
     """#
 
@@ -54,7 +54,7 @@ public enum Prompts {
     - "existing": it is clearly the same matter as an open topic; set topic_id. Be conservative.
     - "new": it asks something of her or needs her attention later; topic_id "".
     - "skip": nothing to do (thanks, acknowledgements, FYI chatter, already resolved); topic_id "".
-    Write a short title (en + zh) a new topic would get, and a one-line reason (en + zh). Use topic ids from the list exactly.
+    Write a short title (en + zh) a new topic would get, and a one-line reason in Simplified Chinese. Use topic ids from the list exactly.
     """
 
     public static func triage(_ store: Store, items: [(ToSortItem, [SlackMessage])]) -> String {
@@ -73,8 +73,9 @@ public enum Prompts {
     """
 
     static let langRules = """
-    Write every text field twice: *_en in English and *_zh in Simplified Chinese with the same content.
-    Keep code identifiers, product names, and established English engineering terms unchanged in Chinese.
+    Language: write what she reads in Simplified Chinese (brief, reply, answer, summary, reason). Keep code identifiers,
+    product names, and established English engineering terms in English. Anything meant to be sent to other people
+    (a draft reply or message) is in English. Fields ending in _en / _zh: write both, English and Chinese.
     Use plain words. Never claim a message was sent: the app never sends messages.
     Refer to topics by their title in text; ids belong only in id fields. Titles name the matter, not its status (no "overdue", "urgent").
     CLAUDE.md and the knowledge files describe the user (an Engineering Manager), the people around her, and what she already knows; use them.
@@ -86,12 +87,12 @@ public enum Prompts {
     You are the background analyst of "Manager OS", a local app that tracks topics for an Engineering Manager.
     You keep the brief of ONE topic current so she can act without re-reading every thread.
     \(langRules)
-    Brief format (Markdown, short; at most about 180 words per language; do not repeat the ask in the facts):
-    ## The ask — one or two sentences: what is asked of her, by whom.
-    ## What is known — at most 6 bullets with facts from the context; name the source.
-    ## Open questions — only if something important is unknown.
-    ## Suggested next step — one concrete step.
-    ## Draft reply — only if a reply from her is expected.
+    Brief format (Markdown, short; at most about 180 words ; do not repeat the ask in the facts):
+    ## 请求 — one or two sentences: what is asked of her, by whom.
+    ## 已知信息 — at most 6 bullets with facts from the context; name the source.
+    ## 待确认的问题 — only if something important is unknown.
+    ## 建议的下一步 — one concrete step.
+    ## 回复草稿 — only if a reply from her is expected; in English, ready to paste.
     Urgency levels (she defined these; pick the one that fits and give a one-line reason):
     \(rubric)
     artifact_summaries: one or two sentences for each context item listed as needing a summary; return [] if none.
@@ -121,7 +122,7 @@ public enum Prompts {
     static let searchRules = """
     You are the search of "Manager OS". The index below lists all of the user's topics, including done ones.
     Find the topics that match her query by meaning, not only by words; the query may be English or Chinese.
-    Return up to 8 hits, best first, each with a one-line reason (en + zh). If the query is a question the index answers, put a short answer in answer_*; else leave answer_* empty.
+    Return up to 8 hits, best first, each with a one-line reason in Simplified Chinese. If the query is a question the index answers, put a short answer (Simplified Chinese) in answer; else leave answer empty.
     Use topic ids from the index exactly. Return hits: [] if nothing matches.
     """
 

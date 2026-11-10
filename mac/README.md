@@ -35,6 +35,7 @@ Environment variables (same as M0): `MANAGER_OS_HOME`, `CLAUDE_BIN`, `MOS_MODEL_
 | `Sources/ManagerCore/Catchup.swift` | "While you were away" and morning / evening digests: what changed since a time, and when they open. |
 | `Sources/ManagerCore/Search.swift` | Keyword search: FTS5 over bigram-expanded text. |
 | `Sources/ManagerCore/Knowledge.swift` | Home folder, knowledge files, `people.md`, session transcripts. |
+| `Resources/AppIcon.icns` | App icon, drawn by `scripts/make-icon.swift`; `bundle.sh` copies it into the app. |
 | `Sources/ManagerOSApp/` | SwiftUI app: window, sidebar + search, topic detail, assistant inspector, knowledge, activity, settings, menu bar. |
 
 The app is not sandboxed: it runs `claude`, reads `~/.claude/projects/…`, and writes `~/ManagerOS`.

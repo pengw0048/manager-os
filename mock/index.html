@@ -1,0 +1,1039 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manager OS Mock</title>
+<style>
+:root{
+  --bg:#fafafa; --panel:#fff; --line:#ececec; --text:#1f2328; --muted:#7a7f87; --hover:#f3f3f4;
+  --accent:#3b5bdb; --sel:#eef2ff;
+  --P0:#d6336c; --P1:#e8890c; --P2:#4c6ef5; --P3:#adb5bd;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141518; --panel:#1b1c20; --line:#2a2c31; --text:#e4e5e7; --muted:#8d929a; --hover:#23252a;
+    --accent:#8ea2ff; --sel:#252a40; --P3:#6c727a;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI",sans-serif}
+button,input,select,textarea{font:inherit;color:inherit}
+.top{height:52px;display:flex;align-items:center;gap:12px;padding:0 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+.brand{font-weight:650}
+.grow{flex:1}
+.btn{border:1px solid var(--line);background:var(--panel);border-radius:7px;padding:5px 11px;cursor:pointer;white-space:nowrap}
+.btn:hover{background:var(--hover)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.ghost{border-color:transparent;background:none}
+.btn.ghost:hover{background:var(--hover)}
+.lang{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+.lang button{border:0;background:none;padding:4px 10px;cursor:pointer;color:var(--muted)}
+.lang button.on{background:var(--sel);color:var(--accent);font-weight:600}
+.layout{display:grid;grid-template-columns:340px 1fr;height:calc(100vh - 52px)}
+.side{border-right:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;min-height:0}
+.side-head{padding:12px;display:flex;gap:8px;border-bottom:1px solid var(--line)}
+.side-head select,.side-head input{border:1px solid var(--line);border-radius:7px;padding:5px 8px;background:var(--panel)}
+.side-head input{flex:1;min-width:0}
+.list{overflow:auto;flex:1}
+.li{display:grid;grid-template-columns:12px 1fr auto;gap:10px;align-items:start;padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--line)}
+.li:hover{background:var(--hover)}
+.li.sel{background:var(--sel)}
+.li.child{padding-left:34px}
+.dot{width:8px;height:8px;border-radius:50%;margin-top:7px}
+.li .t{font-weight:550;overflow:hidden;text-overflow:ellipsis}
+.li.child .t{font-weight:450}
+.li .m{color:var(--muted);font-size:12px}
+.li .r{font-size:12px;color:var(--muted);text-align:right;white-space:nowrap}
+.li .r.hot{color:var(--P0)}
+.sorthdr{padding:8px 14px;font-size:12px;color:var(--muted);background:var(--bg);border-bottom:1px solid var(--line);display:flex;justify-content:space-between}
+.pane{overflow:auto;padding:24px 32px 60px}
+.wrap{max-width:820px}
+.crumb{font-size:12px;color:var(--muted);margin-bottom:4px;cursor:pointer}
+h1{font-size:21px;margin:0 0 14px;font-weight:650;display:flex;gap:10px;align-items:flex-start}
+h1 .grow{outline:none}
+.props{display:grid;grid-template-columns:repeat(4,auto);gap:4px 28px;justify-content:start;align-items:center;font-size:13px;margin-bottom:6px}
+.props .k{color:var(--muted);font-size:12px}
+.props select,.props input{border:1px solid var(--line);border-radius:6px;padding:3px 6px;background:var(--panel)}
+.urg{display:inline-flex;gap:2px;align-items:center}
+.urg button{border:1px solid var(--line);background:var(--panel);border-radius:6px;padding:2px 8px;font-size:12px;font-weight:650;cursor:pointer;color:var(--muted)}
+.urg button.on{color:#fff}
+.mode{font-size:12px;color:var(--muted);margin-left:6px}
+.mode a{color:var(--accent);cursor:pointer}
+.reason{font-size:12px;color:var(--muted);margin:2px 0 18px}
+.reason .ai{color:var(--accent)}
+.subs{margin:0 0 18px;border:1px solid var(--line);border-radius:9px;background:var(--panel)}
+.subs .row{display:grid;grid-template-columns:10px 1fr auto;gap:10px;align-items:center;padding:7px 12px;border-top:1px solid var(--line);cursor:pointer;font-size:13px}
+.subs .row:first-child{border-top:0}
+.subs .row:hover{background:var(--hover)}
+.subs .dot{margin-top:0}
+.subs .add{color:var(--muted)}
+.tabs{display:flex;gap:18px;border-bottom:1px solid var(--line);margin-bottom:16px}
+.tabs button{border:0;background:none;padding:8px 0;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs button.on{color:var(--text);border-bottom-color:var(--text);font-weight:600}
+.brief h4{font-size:12px;color:var(--muted);font-weight:600;margin:16px 0 4px}
+.brief h4:first-child{margin-top:0}
+.brief p{margin:0}
+.brief ul{margin:0;padding-left:18px}
+.draft{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--panel);white-space:pre-wrap}
+.writing{color:var(--muted);display:flex;gap:8px;align-items:center}
+.spin{width:12px;height:12px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:s 1s linear infinite}
+@keyframes s{to{transform:rotate(360deg)}}
+.ask{display:flex;gap:8px;margin-top:22px}
+.ask input{flex:1;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--panel)}
+.note{font-size:12px;color:var(--muted);margin-top:6px}
+.ctx{display:grid;grid-template-columns:30px 1fr;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+.ic{width:30px;height:30px;border-radius:7px;border:1px solid var(--line);display:grid;place-items:center;font-size:10px;font-weight:700;color:var(--muted);background:var(--panel)}
+.ctx .t{font-weight:550}
+.ctx .t a{color:inherit;text-decoration:none;border-bottom:1px dotted var(--muted)}
+.ctx .s{font-size:13px;color:var(--muted)}
+.drop{border:1.5px dashed var(--line);border-radius:8px;padding:12px;text-align:center;color:var(--muted);font-size:13px;margin-top:14px}
+.tl{display:grid;grid-template-columns:70px 1fr;gap:10px;padding:6px 0;font-size:13px;border-bottom:1px solid var(--line)}
+.tl .w{color:var(--muted)}
+.menu{position:relative}
+.menu .pop{position:absolute;right:0;top:34px;background:var(--panel);border:1px solid var(--line);border-radius:9px;box-shadow:0 8px 24px rgba(0,0,0,.08);min-width:180px;padding:4px;display:none;z-index:5}
+.menu .pop.show{display:block}
+.menu .pop button{display:block;width:100%;text-align:left;border:0;background:none;padding:7px 10px;border-radius:6px;cursor:pointer}
+.menu .pop button:hover{background:var(--hover)}
+/* sort */
+.seg{display:grid;grid-template-columns:1fr 240px;gap:14px;padding:12px 0;border-bottom:1px solid var(--line);align-items:center}
+.seg .q{font-size:12px;color:var(--muted)}
+.seg select{border:1px solid var(--line);border-radius:7px;padding:5px 8px;background:var(--panel);width:100%}
+/* settings */
+.settings{max-width:980px;margin:0 auto;padding:24px 32px 60px;overflow:auto;height:calc(100vh - 52px)}
+.settings h2{font-size:15px;margin:28px 0 4px}
+.settings .d{color:var(--muted);font-size:13px;margin-bottom:10px}
+table{width:100%;border-collapse:collapse;font-size:13px;background:var(--panel);border:1px solid var(--line);border-radius:9px;overflow:hidden}
+th,td{text-align:left;padding:7px 10px;border-top:1px solid var(--line)}
+th{color:var(--muted);font-weight:600;border-top:0;font-size:12px}
+td input,td select{border:1px solid transparent;background:none;padding:3px 4px;border-radius:5px;width:100%}
+td input:hover,td select:hover,td input:focus{border-color:var(--line)}
+td input.n{width:56px}
+.perm{display:grid;grid-template-columns:20px 1fr;gap:8px;padding:8px 12px;border-top:1px solid var(--line);font-size:13px;background:var(--panel)}
+.perm:first-child{border-top:0}
+.perm code{font-size:12px;color:var(--muted)}
+.box{border:1px solid var(--line);border-radius:9px;overflow:hidden}
+/* modal */
+.modal{position:fixed;inset:0;background:rgba(15,17,22,.4);display:none;align-items:center;justify-content:center;padding:16px;z-index:10}
+.modal.show{display:flex}
+.dialog{background:var(--panel);border:1px solid var(--line);border-radius:12px;width:min(560px,100%);max-height:90vh;overflow:auto;padding:20px}
+.dialog h2{margin:0 0 12px;font-size:16px}
+.dialog label{display:block;font-size:12px;color:var(--muted);margin:12px 0 4px}
+.dialog input,.dialog textarea,.dialog select{width:100%;border:1px solid var(--line);border-radius:7px;padding:7px 9px;background:var(--panel)}
+.dialog textarea{min-height:80px}
+.dialog .chk{display:grid;grid-template-columns:20px 1fr;gap:6px;padding:5px 0;font-size:13px}
+.dialog .chk input{width:auto}
+.dialog .acts{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+.empty{color:var(--muted);padding:60px 0;text-align:center}
+.btn.sm{padding:2px 8px;font-size:12px}
+.ent{display:grid;grid-template-columns:14px 44px 1fr auto;gap:8px;align-items:start;padding:9px 4px;border-bottom:1px solid var(--line);font-size:13px}
+.ent.exp{cursor:pointer}
+.ent.exp:hover{background:var(--hover)}
+.ent .chev{color:var(--muted);font-size:11px;padding-top:2px}
+.ent .w{color:var(--muted)}
+.ent .ic{width:30px;height:30px}
+.ent .t{font-weight:550}
+.ent .s{color:var(--muted)}
+.ent .src{font-size:10px;font-weight:700;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.op{color:var(--accent);cursor:pointer;font-size:12px;white-space:nowrap}
+.raw{margin-top:8px;border-left:2px solid var(--line);padding:2px 0 2px 10px;display:flex;flex-direction:column;gap:6px;cursor:auto}
+.raw .w{font-size:11px}
+.raw.mono{font:12px/1.6 ui-monospace,Menlo,monospace;color:var(--muted);display:block}
+.cstream{display:flex;flex-direction:column;gap:10px}
+.run{border:1px dashed var(--line);border-radius:8px;padding:7px 10px;font-size:12px;color:var(--muted);cursor:pointer}
+.run .rh{display:flex;gap:6px;align-items:center}
+.run .w{font-variant-numeric:tabular-nums}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:14px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:10px 14px;border-radius:9px;font-size:13px;max-width:min(560px,90vw);z-index:20;display:none;word-break:break-all}
+.toast code{opacity:.8}
+.tiles{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:8px 0}
+.tile{border:1px solid var(--line);border-radius:9px;background:var(--panel);padding:10px 12px}
+.tile .k{font-size:12px;color:var(--muted)}
+.tile .v{font-size:20px;font-weight:650;font-variant-numeric:tabular-nums}
+.tile .s{font-size:11px;color:var(--muted)}
+td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+th.num{text-align:right}
+.pill{font-size:11px;border-radius:10px;padding:1px 8px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.pill.run{border-color:var(--accent);color:var(--accent)}
+.filters{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.ailine{font-size:12px;color:var(--muted);margin:-8px 0 14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.ailine a{color:var(--accent);cursor:pointer}
+pre.jsonl{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12px;white-space:pre-wrap;max-height:50vh;overflow:auto}
+@media (max-width:860px){.tiles{grid-template-columns:1fr 1fr}}
+.btn.ghost.on{background:var(--sel);color:var(--accent)}
+.kbd{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 4px;margin-left:6px}
+/* knowledge */
+.knowledge{display:grid;grid-template-columns:230px 1fr 310px;height:calc(100vh - 52px)}
+.kfiles{border-right:1px solid var(--line);background:var(--panel);overflow:auto}
+.kfile{padding:10px 14px;border-bottom:1px solid var(--line);cursor:pointer}
+.kfile:hover{background:var(--hover)} .kfile.sel{background:var(--sel)}
+.kfile .t{font-size:13px;font-weight:550;word-break:break-all}
+.kfile .m{font-size:12px;color:var(--muted)}
+.kfile .m.old{color:var(--P1)}
+.keditor{display:flex;flex-direction:column;padding:16px 20px;min-width:0;gap:8px}
+.keditor textarea{flex:1;width:100%;min-height:300px;border:1px solid var(--line);border-radius:8px;padding:12px;background:var(--panel);font:13px/1.6 ui-monospace,Menlo,monospace;resize:none}
+.khelp{border-left:1px solid var(--line);background:var(--panel);overflow:auto;padding:14px}
+.khelp h3{font-size:13px;margin:4px 0 8px}
+.khelp .hb{width:100%;text-align:left;margin-bottom:6px}
+.khelp .d{font-size:12px;color:var(--muted);margin:-2px 0 10px}
+.kitem{border:1px solid var(--line);border-radius:8px;padding:9px 10px;margin-bottom:8px;font-size:13px}
+.kitem .src{font-size:11px;color:var(--muted);margin-top:3px}
+.kitem code{font-size:12px;white-space:pre-wrap}
+.kitem .acts{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap}
+.kitem.done{opacity:.5}
+.hr{border-top:1px solid var(--line);margin:16px 0 12px}
+/* assistant */
+.drawer{position:fixed;top:52px;right:0;bottom:0;width:400px;max-width:100vw;background:var(--panel);border-left:1px solid var(--line);box-shadow:-8px 0 24px rgba(0,0,0,.06);display:none;flex-direction:column;z-index:8}
+.drawer.show{display:flex}
+.dhead{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line)}
+.dctx{font-size:12px;color:var(--muted);padding:6px 14px;border-bottom:1px solid var(--line)}
+.msgs{flex:1;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
+.msg{max-width:90%;padding:8px 11px;border-radius:10px;font-size:13px}
+.msg.u{align-self:flex-end;background:var(--sel)}
+.msg.a{align-self:flex-start;background:var(--bg);border:1px solid var(--line)}
+.msg .v{font-size:11px;color:var(--muted)}
+.msg ul{margin:4px 0;padding-left:18px}
+.msg a{color:var(--accent);cursor:pointer}
+.acard{border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-top:8px;background:var(--panel)}
+.acard .acts{display:flex;gap:6px;margin-top:6px;align-items:center}
+.dinput{display:flex;gap:6px;padding:10px;border-top:1px solid var(--line);align-items:center}
+.dinput input{flex:1;min-width:0;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--panel)}
+.mic{width:36px;height:36px;flex:none;border-radius:50%;border:1px solid var(--line);background:var(--panel);cursor:pointer;display:grid;place-items:center}
+.mic.on{background:var(--P0);border-color:var(--P0);animation:pulse 1s ease-in-out infinite}
+@keyframes pulse{50%{box-shadow:0 0 0 6px color-mix(in srgb,var(--P0) 25%,transparent)}}
+@media (min-width:861px){body.dopen .layout,body.dopen .knowledge,body.dopen .settings{margin-right:400px}}
+@media (max-width:860px){
+  .knowledge{grid-template-columns:1fr;height:auto}
+  .khelp,.kfiles{border:0;border-top:1px solid var(--line)}
+  .layout{grid-template-columns:1fr;height:auto}
+  .side{max-height:45vh;border-right:0;border-bottom:1px solid var(--line)}
+  .pane,.settings{padding:16px}
+  .props{grid-template-columns:auto 1fr}
+  .seg{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<div class="top">
+  <span class="brand">Manager OS</span>
+  <button class="btn ghost on" data-page="topics" data-i="topics"></button>
+  <button class="btn ghost" data-page="knowledge" data-i="knowledge"></button>
+  <button class="btn ghost" data-page="activity" data-i="activity"></button>
+  <span class="grow"></span>
+  <button class="btn" id="asstBtn">🎙 <span data-i="assistant"></span><span class="kbd">⌘K</span></button>
+  <button class="btn primary" id="newBtn" data-i="newTopic"></button>
+  <div class="lang"><button data-lang="en" class="on">EN</button><button data-lang="zh">中文</button></div>
+  <button class="btn ghost" id="setBtn" data-i="settings"></button>
+</div>
+
+<div class="layout" id="main">
+  <aside class="side">
+    <div class="side-head">
+      <select id="view"></select>
+      <input id="q" data-ip="search">
+    </div>
+    <div class="list" id="list"></div>
+  </aside>
+  <section class="pane"><div class="wrap" id="pane"></div></section>
+</div>
+
+<div class="settings" id="settings" style="display:none"></div>
+
+<div class="settings" id="activity" style="display:none"></div>
+
+<div class="knowledge" id="knowledge" style="display:none">
+  <div class="kfiles" id="kfiles"></div>
+  <div class="keditor" id="keditor"></div>
+  <div class="khelp" id="khelp"></div>
+</div>
+
+<div class="drawer" id="drawer">
+  <div class="dhead"><b data-i="assistant"></b><span class="grow"></span><button class="btn ghost sm" id="dClose">✕</button></div>
+  <div class="dctx" id="dctx"></div>
+  <div class="msgs" id="msgs"></div>
+  <div class="dinput"><button class="mic" id="mic" title="Voice">🎙</button><input id="dIn"><button class="btn primary" id="dSend" data-i="send"></button></div>
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="modal" id="modal"><div class="dialog" id="dialog"></div></div>
+
+<script>
+const T=(en,zh)=>({en,zh});
+let lang='en';
+const tr=o=>o==null?'':typeof o==='string'?o:(o[lang]??o.en);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const COLORS={P0:'var(--P0)',P1:'var(--P1)',P2:'var(--P2)',P3:'var(--P3)'};
+
+const I={
+  newTopic:T('New topic','新建事项'), settings:T('Settings','设置'), search:T('Search','搜索'),
+  v_needs:T('Needs me','待我处理'), v_waiting:T('Waiting on others','等别人'), v_follow:T('Follow-up due','该跟进了'),
+  v_all:T('All open','全部进行中'), v_done:T('Done','已完成'),
+  toSort:T('To sort','待归类'), toSortHint:T('new, not in a topic yet','新进来、还没归到事项'),
+  st_needs_me:T('Needs me','待我处理'), st_waiting:T('Waiting on others','等别人'), st_snoozed:T('Snoozed','暂缓'), st_done:T('Done','已完成'),
+  urgency:T('Urgency','紧急程度'), status:T('Status','状态'), followUp:T('Follow up','跟进日期'), from:T('From','来自'),
+  auto:T('Auto','自动'), manualUntil:T('Manual until','手动，有效到'), backAuto:T('back to auto','改回自动'),
+  aiWould:T('AI would set','AI 认为应该是'),
+  tabBrief:T('Brief','简报'), tabCtx:T('Context','Context'), tabTl:T('Timeline','时间线'),
+  addSub:T('+ Add sub-topic','+ 添加子事项'),
+  ask:T('Ask Claude about this topic…','就这个事项问 Claude…'), askBtn:T('Ask','提问'),
+  askNote:T('Claude already has this brief and every item in Context.','Claude 已经读过这份简报和 Context 里的所有内容。'),
+  draft:T('Draft reply (not sent)','回复草稿（不会自动发送）'),
+  writing:T('Claude is writing the brief…','Claude 正在写简报…'),
+  drop:T('Paste a link, drop a file, or write a note. Claude adds a summary.','粘贴链接、拖入文件或写一条笔记，Claude 会生成摘要。'),
+  merge:T('Merge into…','合并到…'), split:T('Split…','拆分…'), moveUnder:T('Move under…','移到某个事项下面'), promote:T('Make top-level','移到顶层'),
+  cancel:T('Cancel','取消'), ok:T('OK','确定'), create:T('Create','创建'),
+  title:T('Title','标题'), source:T('Link, text, or file (optional)','链接、文字或文件（可选）'),
+  parent:T('Parent topic','父事项'), none:T('None (top level)','无（顶层）'),
+  mergeHint:T('This topic\'s context, timeline, and sub-topics move into the target. New messages from its threads go to the target.','这个事项的 context、时间线和子事项会移到目标事项。之后它的 thread 来的新消息也会进入目标事项。'),
+  mergeTarget:T('Merge into','合并到'),
+  splitPick:T('Move these out','把这些移出去'), splitTitle:T('New topic title','新事项标题'), splitAs:T('Create as','创建为'),
+  asTop:T('Top-level topic','顶层事项'), asSub:T('Sub-topic of this topic','这个事项的子事项'),
+  sortTitle:T('Sort','归类'), sortHint:T('Claude pre-filled a target for each part. Change any of them, then confirm.','Claude 为每一部分预先选了目标事项。可以随意修改，然后确认。'),
+  newTopicOpt:T('New topic','新建事项'), ignore:T('Ignore','忽略'), confirm:T('Confirm','确认'),
+  empty:T('Nothing here.','这里没有内容。'), back:T('← Back to topics','← 返回事项列表'),
+  s_people:T('People','人员'), s_peopleD:T('Who matters and how to recognize them. Claude reads the notes as context.','谁重要，以及怎么识别他们。Claude 会把备注当作 context。'),
+  c_name:T('Name','姓名'), c_rel:T('Relationship','关系'), c_slack:T('Slack','Slack'), c_email:T('Email','Email'), c_zoom:T('Zoom name','Zoom 显示名'),
+  c_weight:T('Weight','权重'), c_int:T('Can interrupt','可以打断'), c_notes:T('Notes for Claude','给 Claude 的备注'),
+  addPerson:T('+ Add person','+ 添加人员'),
+  r_manager:T('Manager','直属上级'), r_skip:T('Skip-level','隔级上级'), r_peer:T('Peer','同级'), r_report:T('Report','下属'), r_partner:T('Partner team','合作团队'), r_other:T('Other','其他'),
+  i_never:T('Never','从不'), i_due:T('If due today','当天截止时'), i_always:T('Always','总是'),
+  s_rules:T('Rules','规则'), s_rulesD:T('Applied before Claude. Manual urgency always wins.','在 Claude 之前生效。手动设置的紧急程度优先。'),
+  s_perm:T('What Claude may do on its own','Claude 可以自动做的事'), s_permD:T('Claude never merges, splits, changes status, or sends messages.','Claude 不会合并、拆分、改状态或发消息。'),
+  p_brief:T('Write and update the brief','写和更新简报'), p_sum:T('Summarize context items','给 context 生成摘要'),
+  p_urg:T('Set urgency when it is on Auto','紧急程度为“自动”时设置它'), p_due:T('Set due dates I have not set','设置我没设的截止日期'),
+  p_sort:T('Pre-fill targets in To sort','在“待归类”里预选目标事项'), p_rel:T('Add related links it finds','添加它找到的相关链接'),
+  s_notif:T('Notifications','通知'),
+  n_int:T('P0, or a person who can interrupt: macOS notification with sound, even in focus mode','P0，或“可以打断”的人：macOS 通知加声音，专注模式下也会提醒'),
+  n_p1:T('P1: silent notification at the next gap in your calendar','P1：在日程的下一个空档静默提醒'),
+  n_dig:T('P2 / P3: digest at 9:00 and 17:30','P2 / P3：9:00 和 17:30 汇总'),
+  n_fu:T('Follow-ups due: one reminder per day','到期的跟进：每天提醒一次'),
+  topics:T('Topics','事项'), knowledge:T('Knowledge','知识库'), assistant:T('Assistant','助理'), send:T('Send','发送'),
+  k_upd:T('updated','更新于'), k_note:T('Plain Markdown in ~/ManagerOS. Claude reads these files in every job and in your own Claude Code sessions.','~/ManagerOS 里的普通 Markdown 文件。Claude 每个任务都会读，你自己的 Claude Code session 也会读。'),
+  k_gen:T('Generated from Settings → People. Edit people there.','由“设置 → 人员”自动生成，请在那里修改。'), k_saved:T('Saved automatically.','已自动保存。'),
+  k_help:T('Claude can help','Claude 可以帮忙'), k_interview:T('💬 Interview me','💬 问我问题来补充'),
+  k_interviewD:T('Claude asks short questions about what is missing and writes your answers into the right file.','Claude 针对缺的内容问几个简短的问题，再把你的回答写进对应的文件。'),
+  k_tidy:T('🧹 Tidy up this file','🧹 整理这个文件'), k_stale:T('🕓 Check what is outdated','🕓 检查过时的内容'),
+  k_none:T('No changes needed.','不需要修改。'), k_learned:T('Learned from recent topics','从最近的事项中学到的'),
+  k_learnedD:T('Facts Claude noticed in your topics. Nothing is saved until you add it.','Claude 在你的事项里注意到的信息。你点“添加”之前不会保存。'),
+  k_add:T('Add','添加'), k_skip:T('Skip','跳过'), k_still:T('Still true','仍然正确'), k_update:T('Update','更新'), k_remove:T('Remove','删除'), k_apply:T('Apply','应用'),
+  k_to:T('to','写入'), k_doneLbl:T('Done','已处理'),
+  a_ctx:T('Looking at','当前页面'), a_ph:T('Ask, or tell me what to do…','提问，或者让我做事…'), a_listen:T('Listening…','正在听…'),
+  a_confirm:T('Confirm','确认'), a_cancel:T('Cancel','取消'), a_done:T('Done','已完成'), a_cancelled:T('Cancelled','已取消'), a_copy:T('Copy','复制'),
+  a_voice:T('voice','语音'), a_interviewCtx:T('Interview mode → answers go into knowledge files','访谈模式 → 回答会写进知识库文件'),
+  a_mock:T('(Mock) In the app, Claude answers here from your topics and knowledge, and changes the UI only after you confirm.','（Mock）在真正的 app 里，Claude 会根据你的事项和知识库在这里回答，并且只在你确认后修改界面。'),
+  activity:T('AI activity','AI 活动'),
+  tabClaude:T('Claude','Claude'), askLink:T('Talk to Claude about this topic','和 Claude 聊这个事项'),
+  open:T('Open','打开'), op_claude:T('See run','查看这次运行'),
+  op_slack:T('In the app this opens the Slack desktop app at this message:','在真正的 app 里，这会打开 Slack 桌面版并定位到这条消息：'),
+  op_incident:T('In the app this opens the incident page:','在真正的 app 里，这会打开 incident 页面：'),
+  op_zoom:T('In the app this opens the transcript viewer at this time:','在真正的 app 里，这会在 transcript 查看器中跳到这个时间：'),
+  op_web:T('In the app this opens the page in your browser:','在真正的 app 里，这会在浏览器中打开这个页面：'),
+  op_email:T('In the app this opens the email in your mail client:','在真正的 app 里，这会在邮件客户端中打开这封邮件：'),
+  claudeEmpty:T('No conversations yet. Background runs and your chats with Claude about this topic appear here.','还没有对话。后台运行和你就这个事项与 Claude 的对话都会显示在这里。'),
+  done2:T('Done','已完成'), undo:T('Undo','撤销'),
+  chip_tl:T('Add to timeline: ','加到时间线：'), chip_ctx:T('Add to context: ','加到 context：'), chip_changed:T('What changed since this morning?','今天早上以来有什么变化？'),
+  mockTopic:T('(Mock) Claude answers here from this topic’s brief, context, and timeline, in the same session as the background runs.','（Mock）Claude 会在这里根据这个事项的简报、context 和时间线回答，用的是和后台运行同一个 session。'),
+  ac_today:T('Today','今天'), ac_jobs:T('Jobs','任务数'), ac_in:T('Input tokens','输入 tokens'), ac_out:T('Output tokens','输出 tokens'),
+  ac_cache:T('Cache read / write','缓存读 / 写'), ac_cost:T('Est. cost','估算费用'),
+  ac_costNote:T('List-price estimate from claude -p; your subscription is not billed per call.','来自 claude -p 的按标价估算；订阅不会按次收费。'),
+  ac_queue:T('Queue','队列'), ac_queueD:T('2 jobs at a time. Priority: assistant > P0 > P1 > others.','同时最多 2 个任务。优先级：助理 > P0 > P1 > 其他。'),
+  ac_types:T('Session types','Session 类型'), ac_jobsT:T('Jobs','任务'), ac_sessions:T('Sessions','Sessions'),
+  ac_sessionsD:T('Each topic keeps one session. Open any of them in Terminal to continue it yourself.','每个事项有一个 session。可以在终端里打开任意一个，自己接着聊。'),
+  c_time:T('Time','时间'), c_type:T('Type','类型'), c_topic:T('Topic','事项'), c_model:T('Model','模型'), c_trigger:T('Trigger','触发原因'),
+  c_dur:T('Duration','耗时'), c_tok:T('Tokens in / out / cache','Tokens 输入 / 输出 / 缓存'), c_cost:T('Cost','费用'), c_status:T('Status','状态'),
+  c_session:T('Session','Session'), c_last:T('Last used','最近使用'), c_purpose:T('Purpose','用途'), c_life:T('Lifetime','生命周期'),
+  all:T('All','全部'), viewT:T('View transcript','查看记录'), openTerm:T('Open in Terminal','在终端打开'),
+  st_running:T('running','运行中'), st_queued:T('waiting','等待中'), st_ok:T('done','完成'),
+  ty_triage:T('Triage','分拣'), ty_topic:T('Topic','事项'), ty_invest:T('Investigation','调查'), ty_meeting:T('Meeting','会议'), ty_knowledge:T('Knowledge','知识库'), ty_assistant:T('Assistant','助理'),
+  tyd_triage:T('Sorts batches of new messages. No tools, no memory.','给新消息批量分拣。没有工具，不保留 session。'),
+  tyd_topic:T('Keeps the brief of one topic up to date.','维护一个事项的简报。'),
+  tyd_invest:T('Deep dive forked from a topic session.','从事项 session 分叉出来的深入调查。'),
+  tyd_meeting:T('Splits a transcript and finds action items.','拆分 transcript，找出 action item。'),
+  tyd_knowledge:T('Finds learned and outdated facts.','找出新学到的和过时的信息。'),
+  tyd_assistant:T('The chat drawer.','右侧的聊天面板。'),
+  tyl_triage:T('one call per batch','每批一次调用'), tyl_topic:T('resumed; restarts from the brief after ~100k tokens','持续 resume；约 100k tokens 后从简报重新开始'),
+  tyl_invest:T('per investigation','每次调查一个'), tyl_meeting:T('per transcript','每个 transcript 一个'), tyl_knowledge:T('daily','每天'), tyl_assistant:T('one per day','每天一个'),
+  ai_pending:T('3 new messages; brief updates when the thread is quiet for 60 s','3 条新消息；thread 安静 60 秒后更新简报'),
+  ai_sess:T('AI session','AI session'), investigate:T('Investigate','调查'),
+  termNote:T('In the app this button opens Terminal and runs:','在真正的 app 里，这个按钮会打开终端并运行：'),
+  close:T('Close','关闭'),
+  s_lang:T('Language','语言'), s_langD:T('Claude writes every brief and summary in English and Chinese, so switching is instant.','Claude 的简报和摘要都同时写中英文两份，所以切换语言不用等。'),
+};
+const L=k=>tr(I[k]);
+
+let topics=[
+ {id:'t1',parent:null,urg:'P0',mode:'auto',status:'needs_me',title:T('Ingest error rate spike','Ingest 错误率飙升'),
+  from:T('On-call engineer','On-call 工程师'),when:T('12 min ago','12 分钟前'),follow:'',due:T('now','现在'),
+  reason:T('Active incident with customer impact; you are the escalation EM.','正在进行的 incident，影响到客户；你是升级处理的 EM。'),
+  brief:[
+   [T('The ask','需要你做什么'),[T('Decide: roll back deploy v2.31 now, or wait for the hotfix (ETA 40 min).','决定：现在回滚 v2.31，还是等 hotfix（预计 40 分钟）。')]],
+   [T('What is known','已知情况'),[T('Error rate rose from 0.2% to 4.1% at 13:42 in two regions.','13:42 起两个 region 的错误率从 0.2% 升到 4.1%。'),
+     T('Deploy v2.31 finished at 13:35 in the same regions.','v2.31 在 13:35 部署完成，正是这两个 region。'),
+     T('Impact: delayed data; no data loss reported.','影响：数据延迟，目前没有数据丢失的报告。')]],
+   [T('Likely root cause','可能的 root cause'),[T('High: v2.31 raised the batch size 4×, causing timeouts for large tenants (PR #1182).','高：v2.31 把 batch size 调大了 4 倍，大 tenant 出现超时（PR #1182）。'),
+     T('Medium: upstream queue latency rose at the same time; order unclear.','中：上游队列延迟同时上升，先后顺序还不清楚。')]],
+   [T('Suggested next step','建议下一步'),[T('Roll back per region now; keep the hotfix as plan B.','现在按 region 回滚，hotfix 作为备选方案。')]],
+  ],
+  draft:T("Let's roll back v2.31 in the two affected regions now instead of waiting for the hotfix. Please post here when the rollback starts. I'll update leadership.",
+          '我们现在就在受影响的两个 region 回滚 v2.31，不等 hotfix 了。开始回滚时请在这里说一声，我来同步给 leadership。'),
+  ctx:[
+   {ic:'SL',a:'slack',t:'#incident-4821',url:'https://acme.slack.com/archives/C04INC4821',s:T('42 messages. On-call proposes rollback; hotfix ETA 40 min; asks you to decide.','42 条消息。On-call 建议回滚；hotfix 预计 40 分钟；需要你拍板。'),
+    det:[['On-call engineer','13:48','@you paging you as escalation EM — error rate at 4% and rising in two regions.'],['On-call engineer','13:56','Root cause looks like the batch size change in v2.31.'],['Backend engineer','13:57','I can have a hotfix that reverts the default in ~40 min.'],['On-call engineer','13:58','@you rollback now, or wait for the hotfix?']]},
+   {ic:'TR',a:'zoom',t:'Incident bridge 14:05–14:30',url:'transcript://bridge-4821',s:T('Zoom transcript. Impact is delay only; SRE can roll back per region.','Zoom transcript。影响只是延迟；SRE 可以按 region 回滚。'),
+    det:[['SRE lead','14:12','We can roll back per region; each one takes about 15 minutes.'],['On-call engineer','14:14','Impact is delay only, no data loss so far.']]},
+   {ic:'PR',a:'web',t:'PR #1182 — batch size tuning',url:'https://github.example.com/ingest/pull/1182',s:T('Raises the default batch size 4×. Shipped in v2.31.','把默认 batch size 调大 4 倍，随 v2.31 发布。')},
+   {ic:'DB',a:'web',t:'Dashboard: ingest workers',url:'https://dashboards.example.com/ingest-workers',s:T('Link. Snapshot taken at 13:55.','链接。13:55 截了快照。')},
+   {ic:'NO',a:'me',t:T('My note','我的笔记'),s:T('Director wants a summary before the 16:00 staff meeting.','Director 希望在 16:00 staff meeting 前拿到总结。')},
+  ],
+  tl:[
+   {w:'13:46',a:'incident',x:T('Incident declared (Sev 2); you are the escalation EM','Incident 已宣布（Sev 2）；你是升级处理的 EM'),url:'https://incidents.example.com/incidents/4821',
+    det:[['Incident bot','13:46','Sev 2 declared: elevated error rate on ingest workers. Commander: on-call engineer. Escalation: you.']]},
+   {w:'13:48',a:'slack',x:T('Paged in #incident-4821','在 #incident-4821 被 page'),url:'https://acme.slack.com/archives/C04INC4821/p1794250080000100',
+    det:[['On-call engineer','13:48','@you paging you as escalation EM — error rate at 4% and rising in two regions.']]},
+   {w:'13:49',a:'claude',x:T('Claude wrote the first brief; urgency P0 (rule: #incident-*)','Claude 写了第一版简报；紧急程度 P0（规则：#incident-*）'),run:'r1'},
+   {w:'13:58',a:'slack',x:T('3 new messages: hotfix ETA 40 min','3 条新消息：hotfix 预计 40 分钟'),url:'https://acme.slack.com/archives/C04INC4821/p1794250680000200',
+    det:[['On-call engineer','13:56','Root cause looks like the batch size change in v2.31.'],['Backend engineer','13:57','I can have a hotfix that reverts the default in ~40 min.'],['On-call engineer','13:58','@you rollback now, or wait for the hotfix?']]},
+   {w:'14:02',a:'claude',x:T('Investigation started (forked session)','开始调查（分叉出的 session）'),run:'r3'},
+   {w:'14:12',a:'me',x:T('Note: per-region rollback takes ~15 min (added via Claude tab)','笔记：按 region 回滚约 15 分钟（通过 Claude 标签页添加）')},
+   {w:'14:31',a:'zoom',x:T('Bridge call transcript added (14:05–14:30)','加入了 bridge 会议的 transcript（14:05–14:30）'),url:'transcript://bridge-4821#14:12',
+    det:[['SRE lead','14:12','We can roll back per region; each one takes about 15 minutes.'],['On-call engineer','14:14','Impact is delay only, no data loss so far.']]},
+   {w:'14:33',a:'claude',x:T('Claude updated the brief: added the rollback option','Claude 更新了简报：加入回滚选项'),run:'r2'},
+  ],
+  chat:[
+   {k:'run',id:'r1',s:'topic',w:'13:49',x:T('Background · first brief from #incident-4821','后台 · 根据 #incident-4821 写第一版简报'),m:'41 s · $0.13',
+    steps:['read_artifact(#incident-4821) → 6 messages','fetch_url(PR #1182) → diff: default batch size 500 → 2000','set_auto_urgency(P0, "active incident; you are escalation EM")','write_brief(v1, en + zh)']},
+   {k:'run',id:'r3',s:'invest',w:'14:02',x:T('Investigation · likely root cause','调查 · 可能的 root cause'),m:'4 m 10 s · $1.92',
+    steps:['search_topics("ingest delay") → postmortem from 3 weeks ago','fetch_url(dashboard) → error rate by tenant: top 5 tenants = 81% of errors','fetch_url(PR #1182) → batch size 4×, no per-tenant cap','write_brief(findings: High = batch size, Medium = upstream latency)']},
+   {k:'u',s:'topic',w:'14:12',voice:true,text:'把 bridge 会议里说的“每个 region 回滚大概 15 分钟”加到时间线上'},
+   {k:'a',s:'topic',w:'14:12',x:T('Added to the timeline at 14:12: “Per-region rollback takes ~15 min.”','已加到时间线 14:12：“按 region 回滚约 15 分钟。”'),undo:true},
+   {k:'run',id:'r2',s:'topic',w:'14:33',x:T('Background · update after 3 new messages (debounced 60 s)','后台 · 3 条新消息后更新（防抖 60 秒）'),m:'38 s · $0.21',
+    steps:['read 3 new messages (13:56–13:58)','set_auto_urgency(P0, "hotfix ETA does not change impact")','write_brief(v2: added rollback option)']},
+   {k:'u',s:'topic',w:'14:35',text:'What exactly did the backend engineer say about the hotfix?'},
+   {k:'a',s:'topic',w:'14:35',x:T('At 13:57 in #incident-4821: “I can have a hotfix that reverts the default in ~40 min.” No update since.','13:57 在 #incident-4821：“I can have a hotfix that reverts the default in ~40 min.” 之后没有更新。'),
+    link:'https://acme.slack.com/archives/C04INC4821/p1794250620000150'},
+  ]},
+ {id:'t1a',parent:'t1',urg:'P0',mode:'auto',status:'needs_me',title:T('Decide: rollback vs hotfix','决定：回滚还是等 hotfix'),from:T('On-call engineer','On-call 工程师'),when:T('10 min ago','10 分钟前'),
+  reason:T('Blocks incident mitigation.','卡住了 incident 的缓解。'),brief:[[T('The ask','需要你做什么'),[T('See the parent topic.','见父事项。')]]],ctx:[],tl:[]},
+ {id:'t1b',parent:'t1',urg:'P1',mode:'auto',status:'needs_me',title:T('Update leadership on impact','向 leadership 同步影响'),from:T('Director','Director'),when:T('20 min ago','20 分钟前'),due:T('16:00','16:00'),
+  reason:T('Director asked for it before 16:00.','Director 要求 16:00 前给到。'),brief:[[T('The ask','需要你做什么'),[T('A 3-line summary of impact, cause, and ETA before the 16:00 staff meeting.','16:00 staff meeting 前给一个三行总结：影响、原因、预计恢复时间。')]]],ctx:[],tl:[]},
+ {id:'t2',parent:null,urg:'P1',mode:'auto',status:'needs_me',title:T('Q1 headcount justification','Q1 headcount 申请理由'),from:T('Director','Director'),when:T('1 h ago','1 小时前'),due:T('today 17:00','今天 17:00'),
+  reason:T('Your manager asked; due today.','你的上级要的，今天截止。'),
+  brief:[[T('The ask','需要你做什么'),[T('One paragraph per requested role: why now, and what slips without it.','每个申请的岗位写一段：为什么现在要，没有的话什么会延期。')]],
+         [T('From the planning doc','规划文档里的信息'),[T('2 roles requested: 1 backend, 1 SRE.','申请 2 个岗位：1 个后端，1 个 SRE。'),T('On-call load and the API v1 sunset are the main drivers.','主要原因是 on-call 负担和 API v1 下线。')]]],
+  draft:T('Draft justification is ready in Context → "Headcount draft".','申请理由草稿已放在 Context →「Headcount draft」。'),
+  ctx:[{ic:'SL',t:'DM from Director',s:T('Needs the justification by 17:00 for the planning review.','17:00 前需要申请理由，用于规划评审。')},{ic:'DO',t:'Q1 planning doc',s:T('Team roadmap and current headcount.','团队路线图和当前人数。')}],
+  tl:[['12:55',T('DM received','收到私信')]]},
+ {id:'t3',parent:null,urg:'P1',mode:'auto',status:'needs_me',title:T('API deprecation timeline for partner team','给合作团队的 API 下线时间表'),from:T('Partner team lead','合作团队负责人'),when:T('3 h ago','3 小时前'),due:T('Thu','周四'),
+  reason:T('External team is blocked; committed date Thursday.','外部团队被卡住；承诺周四给。'),
+  brief:[[T('The ask','需要你做什么'),[T('A firm sunset date for API v1.','给出 API v1 确定的下线日期。')]]],
+  ctx:[{ic:'EM',t:'Email: API v1 timeline?',s:T('Partner asks for a date to plan their migration.','对方要一个日期来安排迁移。')}],tl:[['10:12',T('Email received','收到邮件')]]},
+ {id:'t4',parent:null,urg:'P1',mode:'auto',status:'waiting',title:T('Capacity numbers from SRE','SRE 的容量数据'),from:T('You → SRE lead','你 → SRE 负责人'),when:T('2 days ago','2 天前'),follow:'today',
+  reason:T('Migration plan depends on it.','迁移计划依赖这份数据。'),
+  brief:[[T('Status','状态'),[T('You asked 2 working days ago. No reply.','你两个工作日前问过，还没有回复。')]]],
+  draft:T('Hi, any update on the capacity numbers? I need them for the migration plan by Friday.','你好，容量数据有进展吗？我周五前要用在迁移计划里。'),
+  ctx:[{ic:'SL',t:'DM with SRE lead',s:T('Your request and their "will do this week".','你的请求，以及对方说的“这周给”。')}],tl:[]},
+ {id:'t5',parent:null,urg:'P2',mode:'auto',status:'needs_me',title:T('On-call rotation proposal','On-call 轮值方案'),from:T('You (from 1:1)','你（来自 1:1）'),when:T('Fri','周五'),due:T('Mon','周一'),
+  reason:T('You promised it by Monday.','你答应了周一前给。'),
+  brief:[[T('The ask','需要你做什么'),[T('Share a proposal that reduces night pages.','分享一个能减少夜间 page 的方案。')]]],
+  ctx:[{ic:'TR',t:'1:1 transcript (Fri)',s:T('You promised a proposal by Monday.','你答应周一前给方案。')}],tl:[]},
+ {id:'t6',parent:null,urg:'P3',mode:'manual',until:T('Mon','周一'),aiUrg:'P2',status:'snoozed',title:T('Review promo packet draft','审阅晋升材料草稿'),from:T('Report','下属'),when:T('yesterday','昨天'),
+  reason:T('Calibration deadline is next Wednesday.','Calibration 截止是下周三。'),
+  brief:[[T('Summary','摘要'),[T('Strong on project impact; leadership examples are thin.','项目影响写得扎实；领导力的例子偏少。')]]],
+  ctx:[{ic:'DO',t:'Promo packet (Google Doc)',s:T('6 pages.','6 页。')}],tl:[]},
+ {id:'t7',parent:null,urg:'P3',mode:'auto',status:'done',title:T('Approve conference travel','批准会议出差'),from:T('Report','下属'),when:T('Mon','周一'),reason:T('',''),brief:[],ctx:[],tl:[]},
+];
+let sortItems=[
+ {id:'s1',ic:'TR',title:T('Meeting: Platform sync','会议：Platform sync'),when:T('11:02','11:02'),
+  sum:T('45 min, 6 people. Partner needs an API date by Thursday; schema freeze agreed; SRE owes capacity numbers; on-call load raised.','45 分钟，6 人。合作团队周四前要 API 日期；同意冻结 schema；SRE 欠容量数据；有人提出 on-call 负担问题。'),
+  parts:[
+   {range:'12:00–19:45',q:T('Schema changes are frozen until January.','Schema 变更冻结到一月。'),target:'new',newTitle:T('Schema freeze until January','Schema 冻结到一月')},
+   {range:'21:30–27:00',q:T('"Can you get us a firm date by Thursday?"','“周四前能给我们一个确定日期吗？”'),target:'t3'},
+   {range:'30:10–32:00',q:T('"I\'ll pull the numbers this week." — SRE lead','“这周我把数据拉出来。”—— SRE 负责人'),target:'t4'},
+   {range:'36:40–41:00',q:T('"We\'ve had four pages a night this week."','“这周每晚被 page 四次。”'),target:'t5'},
+  ]},
+ {id:'s2',ic:'SL',title:T('#platform-eng: cost report review','#platform-eng：成本报告审阅'),when:T('09:40','09:40'),
+  sum:T('A peer EM asks for a review of the Q4 cost report.','一位同级 EM 请大家审阅 Q4 成本报告。'),
+  parts:[{range:'',q:T('"Could someone from your team review the cost report by Friday?"','“你们团队能有人周五前看一下成本报告吗？”'),target:'new',newTitle:T('Review Q4 cost report','审阅 Q4 成本报告')}]},
+];
+
+let state={view:'needs',sel:'t1',tab:'brief',q:''};
+const get=id=>topics.find(t=>t.id===id);
+const inView=t=>{
+  if(state.q && !tr(t.title).toLowerCase().includes(state.q.toLowerCase())) return false;
+  switch(state.view){
+    case 'needs':return t.status==='needs_me';
+    case 'waiting':return t.status==='waiting';
+    case 'follow':return t.follow==='today';
+    case 'done':return t.status==='done';
+    default:return t.status!=='done';
+  }};
+const order={P0:0,P1:1,P2:2,P3:3};
+
+function renderStatic(){
+  document.querySelectorAll('[data-i]').forEach(e=>e.textContent=L(e.dataset.i));
+  document.querySelectorAll('[data-ip]').forEach(e=>e.placeholder=L(e.dataset.ip));
+  document.getElementById('view').innerHTML=['needs','waiting','follow','all','done'].map(v=>{
+    const n=topics.filter(t=>!t.parent&&({needs:t.status==='needs_me',waiting:t.status==='waiting',follow:t.follow==='today',all:t.status!=='done',done:t.status==='done'})[v]).length;
+    return `<option value="${v}" ${state.view===v?'selected':''}>${L('v_'+v)} (${n})</option>`}).join('');
+  document.documentElement.lang=lang==='zh'?'zh-CN':'en';
+}
+
+function liHtml(t,child){
+  const right=t.follow==='today'?`<div class="r hot">${L('followUp')} · ${lang==='zh'?'今天':'today'}</div>`:t.due?`<div class="r">${tr(t.due)}</div>`:'<div class="r"></div>';
+  return `<div class="li ${child?'child':''} ${state.sel===t.id?'sel':''}" data-sel="${t.id}">
+    <span class="dot" style="background:${COLORS[t.urg]}"></span>
+    <div style="min-width:0"><div class="t">${esc(tr(t.title))}</div><div class="m">${esc(tr(t.from))} · ${esc(tr(t.when))}</div></div>${right}</div>`;
+}
+function renderList(){
+  let h='';
+  if(sortItems.length){
+    h+=`<div class="sorthdr"><span>${L('toSort')} · ${sortItems.length}</span><span>${L('toSortHint')}</span></div>`;
+    h+=sortItems.map(s=>`<div class="li ${state.sel===s.id?'sel':''}" data-sel="${s.id}"><span class="dot" style="background:var(--muted)"></span>
+      <div style="min-width:0"><div class="t">${esc(tr(s.title))}</div><div class="m">${esc(tr(s.sum)).slice(0,60)}…</div></div><div class="r">${tr(s.when)}</div></div>`).join('');
+    h+=`<div class="sorthdr"><span>${L('v_'+state.view)}</span><span></span></div>`;
+  }
+  const tops=topics.filter(t=>!t.parent).sort((a,b)=>order[a.urg]-order[b.urg]);
+  let any=false;
+  tops.forEach(t=>{
+    const kids=topics.filter(k=>k.parent===t.id);
+    const show=inView(t), kidShow=kids.filter(inView);
+    if(!show&&!kidShow.length) return;
+    any=true; h+=liHtml(t,false);
+    (show?kids.filter(k=>k.status!=='done'||state.view==='done'):kidShow).forEach(k=>h+=liHtml(k,true));
+  });
+  if(!any) h+=`<div class="empty">${L('empty')}</div>`;
+  const el=document.getElementById('list'); el.innerHTML=h;
+  el.querySelectorAll('[data-sel]').forEach(e=>e.onclick=()=>{state.sel=e.dataset.sel;state.tab='brief';render()});
+}
+
+function urgHtml(t){
+  const btns=['P0','P1','P2','P3'].map(p=>`<button data-urg="${p}" class="${t.urg===p?'on':''}" style="${t.urg===p?`background:${COLORS[p]};border-color:${COLORS[p]}`:''}">${p}</button>`).join('');
+  const mode=t.mode==='auto'?`<span class="mode">${L('auto')}</span>`
+    :`<span class="mode">${L('manualUntil')} <select id="until"><option>${tr(t.until)||'—'}</option><option>${lang==='zh'?'明天':'tomorrow'}</option><option>${lang==='zh'?'一直':'forever'}</option></select> · <a id="toAuto">${L('backAuto')}</a></span>`;
+  return `<span class="urg">${btns}</span>${mode}`;
+}
+function renderTopic(t){
+  const parent=t.parent?get(t.parent):null;
+  const kids=topics.filter(k=>k.parent===t.id);
+  let h='';
+  if(parent) h+=`<div class="crumb" data-sel="${parent.id}">↑ ${esc(tr(parent.title))}</div>`;
+  h+=`<h1><span class="grow" contenteditable="true">${esc(tr(t.title))}</span>
+      <span class="menu"><button class="btn ghost" id="moreBtn">⋯</button><div class="pop" id="pop">
+        <button data-act="merge">${L('merge')}</button><button data-act="split">${L('split')}</button>
+        <button data-act="move">${L('moveUnder')}</button>${t.parent?`<button data-act="promote">${L('promote')}</button>`:''}</div></span></h1>`;
+  h+=`<div class="props">
+      <span class="k">${L('urgency')}</span><span class="k">${L('status')}</span><span class="k">${L('followUp')}</span><span class="k">${L('from')}</span>
+      <span>${urgHtml(t)}</span>
+      <span><select id="status">${['needs_me','waiting','snoozed','done'].map(s=>`<option value="${s}" ${t.status===s?'selected':''}>${L('st_'+s)}</option>`).join('')}</select></span>
+      <span><input type="date" value="${t.follow==='today'?'2026-11-09':''}"></span>
+      <span>${esc(tr(t.from))}</span></div>`;
+  let reason=t.mode==='auto'?`${L('auto')}: ${esc(tr(t.reason))}`:'';
+  if(t.mode==='manual'&&t.aiUrg&&t.aiUrg!==t.urg) reason=`<span class="ai">${L('aiWould')} ${t.aiUrg}: ${esc(tr(t.reason))}</span>`;
+  h+=`<div class="reason">${reason}</div>`;
+  const ss=sessions.find(x=>x.topic===t.id&&x.type==='topic');
+  if(ss) h+=`<div class="ailine">${t.id==='t1'?`<span><span class="spin" style="display:inline-block;vertical-align:-2px"></span> ${L('ai_pending')}</span>·`:''}
+    <span>${L('ai_sess')} <a data-goact>${ss.id}</a> · ${ss.jobs} ${L('ac_jobs').toLowerCase()} · $${ss.cost.toFixed(2)}</span>·<a>${L('investigate')}</a></div>`;
+  if(!t.parent){
+    h+=`<div class="subs">${kids.map(k=>`<div class="row" data-sel="${k.id}"><span class="dot" style="background:${COLORS[k.urg]}"></span><span>${esc(tr(k.title))}</span><span class="note" style="margin:0">${L('st_'+k.status)}</span></div>`).join('')}
+        <div class="row add" id="addSub"><span></span><span>${L('addSub')}</span><span></span></div></div>`;
+  }
+  t.chat=t.chat||[];
+  h+=`<div class="tabs">${[['brief','tabBrief'],['ctx','tabCtx'],['tl','tabTl'],['claude','tabClaude']].map(([k,l])=>`<button data-tab="${k}" class="${state.tab===k?'on':''}">${L(l)}${k==='ctx'?` · ${t.ctx.length}`:k==='tl'?` · ${t.tl.length}`:''}</button>`).join('')}</div>`;
+  if(state.tab==='brief'){
+    if(t.writing) h+=`<div class="writing"><span class="spin"></span>${L('writing')}</div>`;
+    else{
+      h+=`<div class="brief">${t.brief.map(([hd,items])=>`<h4>${tr(hd)}</h4>${items.length===1?`<p>${esc(tr(items[0]))}</p>`:`<ul>${items.map(i=>`<li>${esc(tr(i))}</li>`).join('')}</ul>`}`).join('')}
+        ${t.draft?`<h4>${L('draft')}</h4><div class="draft">${esc(tr(t.draft))}</div>`:''}</div>`;
+    }
+    h+=`<div style="margin-top:20px"><button class="btn" data-tab="claude">💬 ${L('askLink')}</button></div>`;
+  }else if(state.tab==='ctx'){
+    h+=t.ctx.map((c,i)=>entryHtml(t,'c'+i,{ic:c.ic,a:c.a,title:tr(c.t),sub:tr(c.s),url:c.url,det:c.det})).join('');
+    h+=`<div class="drop">${L('drop')}</div>`;
+  }else if(state.tab==='tl'){
+    h+=t.tl.map((e,i)=>Array.isArray(e)?entryHtml(t,'t'+i,{w:e[0],a:'me',title:tr(e[1])}):entryHtml(t,'t'+i,{w:e.w,a:e.a,title:tr(e.x),url:e.url,det:e.det,run:e.run})).join('')||`<div class="empty">${L('empty')}</div>`;
+  }else{
+    h+=renderClaudeTab(t);
+  }
+  return h;
+}
+const ACT_IC={slack:'SL',incident:'IN',zoom:'TR',claude:'AI',me:'ME',web:'↗',email:'EM'};
+const OPENS={slack:'op_slack',incident:'op_incident',zoom:'op_zoom',web:'op_web',email:'op_email'};
+let expanded=new Set(), expRuns=new Set(), sessFilter='all';
+function entryHtml(t,key,e){
+  const k=t.id+':'+key, open=expanded.has(k), canExp=e.det&&e.det.length;
+  const openBtn=e.run?`<a class="op" data-run="${e.run}">${L('op_claude')} →</a>`:e.url?`<a class="op" data-url="${esc(e.url)}" data-kind="${e.a}">${L('open')} ↗</a>`:'';
+  return `<div class="ent ${canExp?'exp':''}" ${canExp?`data-exp="${k}"`:''}>
+    <span class="chev">${canExp?(open?'▾':'▸'):''}</span>
+    ${e.w?`<span class="w">${e.w}</span>`:`<span class="ic">${e.ic||ACT_IC[e.a]||''}</span>`}
+    <div class="body"><div>${e.w?`<span class="src">${ACT_IC[e.a]||''}</span> `:''}<span class="${e.w?'':'t'}">${esc(e.title)}</span></div>${e.sub?`<div class="s">${esc(e.sub)}</div>`:''}
+      ${open?`<div class="raw">${e.det.map(([who,tm,txt])=>`<div><b>${esc(who)}</b> <span class="w">${tm}</span><br>${esc(txt)}</div>`).join('')}</div>`:''}</div>
+    <span>${openBtn}</span></div>`;
+}
+function renderClaudeTab(t){
+  const sess=[...new Set(t.chat.map(c=>c.s))];
+  const ids={topic:(sessions.find(x=>x.topic===t.id&&x.type==='topic')||{}).id,invest:(sessions.find(x=>x.topic===t.id&&x.type==='invest')||{}).id};
+  let h=`<div class="filters"><button class="btn sm ${sessFilter==='all'?'primary':''}" data-sf="all">${L('all')}</button>${sess.map(s=>`<button class="btn sm ${sessFilter===s?'primary':''}" data-sf="${s}">${L('ty_'+s)}${ids[s]?` · ${ids[s]}`:''}</button>`).join('')}</div>`;
+  const list=t.chat.filter(c=>sessFilter==='all'||c.s===sessFilter);
+  h+=`<div class="cstream">`;
+  if(!list.length) h+=`<div class="note">${L('claudeEmpty')}</div>`;
+  list.forEach(c=>{
+    if(c.k==='run'){
+      const open=expRuns.has(c.id);
+      h+=`<div class="run" data-r="${c.id}" id="run-${c.id}"><div class="rh"><span class="chev">${open?'▾':'▸'}</span><span class="w">${c.w}</span> ⚙ ${esc(tr(c.x))}<span class="grow"></span><span class="w">${c.m}</span></div>
+        ${open?`<div class="raw mono">${c.steps.map(s=>esc(s)).join('<br>')}</div>`:''}</div>`;
+    }else if(c.k==='u'){
+      h+=`<div class="msg u">${c.voice?`<div class="v">🎙 ${L('a_voice')}</div>`:''}${esc(c.text)}</div>`;
+    }else{
+      h+=`<div class="msg a">${esc(tr(c.x))}${c.link?` <a data-url="${esc(c.link)}" data-kind="slack">${L('open')} ↗</a>`:''}
+        ${c.undo?`<div class="note" style="margin:4px 0 0">✓ ${L('done2')} · <a data-undo="${t.chat.indexOf(c)}">${L('undo')}</a></div>`:''}
+        ${c.confirm?`<div class="acard">${esc(tr(c.confirm))}<div class="acts">${c.cs?`<span class="note" style="margin:0">${c.cs==='ok'?'✓ '+L('a_done'):L('a_cancelled')}</span>`:`<button class="btn sm primary" data-cf="${t.chat.indexOf(c)}:ok">${L('a_confirm')}</button><button class="btn sm" data-cf="${t.chat.indexOf(c)}:no">${L('a_cancel')}</button>`}</div></div>`:''}</div>`;
+    }
+  });
+  h+=`</div><div class="chips">${['chip_tl','chip_ctx','chip_changed'].map(k=>`<button class="btn sm" data-chip="${k}">${L(k)}</button>`).join('')}</div>
+    <div class="dinput" style="padding:8px 0;border:0"><button class="mic" id="tmic">🎙</button><input id="tIn" placeholder="${L('ask')}"><button class="btn primary" id="tSend">${L('send')}</button></div>
+    <div class="note">${L('askNote')}</div>`;
+  return h;
+}
+function topicSend(t,text,voice){
+  if(!text.trim()) return;
+  t.chat.push({k:'u',s:'topic',w:'now',voice,text});
+  let m;
+  if((m=text.match(/^(?:add to timeline|加到时间线|添加到时间线)[:：]?\s*(.+)/i))){
+    const e={w:'now',a:'me',x:T(m[1]+' (added via Claude tab)',m[1]+'（通过 Claude 标签页添加）')}; t.tl.push(e);
+    t.chat.push({k:'a',s:'topic',x:T('Added to the timeline: “'+m[1]+'”','已加到时间线：“'+m[1]+'”'),undo:true,ref:e,refIn:'tl'});
+  }else if((m=text.match(/^(?:add to context|加到 ?context|添加到 ?context)[:：]?\s*(.+)/i))){
+    const e={ic:'NO',a:'me',t:T('Note','笔记'),s:T(m[1],m[1])}; t.ctx.push(e);
+    t.chat.push({k:'a',s:'topic',x:T('Added a note to Context: “'+m[1]+'”','已在 Context 里加了一条笔记：“'+m[1]+'”'),undo:true,ref:e,refIn:'ctx'});
+  }else if(/merge|split|status|合并|拆分|状态|紧急/i.test(text)){
+    t.chat.push({k:'a',s:'topic',x:T('This changes the topic structure, so please confirm.','这会改变事项的结构，请先确认。'),confirm:T('Set status of this topic to “Waiting on others”','把这个事项的状态改为“等别人”')});
+  }else{
+    t.chat.push({k:'a',s:'topic',x:L2('mockTopic')});
+  }
+  render();
+}
+const L2=k=>I[k];
+let toastTimer;
+function toast(html){const el=document.getElementById('toast'); el.innerHTML=html; el.style.display='block'; clearTimeout(toastTimer); toastTimer=setTimeout(()=>el.style.display='none',3500);}
+function renderSort(s){
+  const opts=sel=>{
+    const tops=topics.filter(t=>t.status!=='done');
+    return `<option value="new" ${sel==='new'?'selected':''}>${L('newTopicOpt')}</option>`+tops.map(t=>`<option value="${t.id}" ${sel===t.id?'selected':''}>${t.parent?'↳ ':''}${esc(tr(t.title))}</option>`).join('')+`<option value="ignore">${L('ignore')}</option>`;
+  };
+  let h=`<h1><span class="ic" style="flex:none">${s.ic}</span><span class="grow">${esc(tr(s.title))}</span></h1>
+    <p>${esc(tr(s.sum))}</p><div class="note" style="margin-bottom:10px">${L('sortHint')}</div>`;
+  h+=s.parts.map((p,i)=>`<div class="seg"><div>${p.range?`<div class="q">${p.range}</div>`:''}${esc(tr(p.q))}${p.target==='new'?`<div class="q">${L('newTopicOpt')}: ${esc(tr(p.newTitle))}</div>`:''}</div>
+      <select data-part="${i}">${opts(p.target)}</select></div>`).join('');
+  h+=`<div style="display:flex;justify-content:flex-end;margin-top:16px"><button class="btn primary" id="confirmSort">${L('confirm')}</button></div>`;
+  return h;
+}
+
+function render(){
+  renderStatic(); renderList();
+  const pane=document.getElementById('pane');
+  const s=sortItems.find(x=>x.id===state.sel);
+  const t=get(state.sel);
+  pane.innerHTML=s?renderSort(s):t?renderTopic(t):`<div class="empty">${L('empty')}</div>`;
+  bindPane(t,s);
+  if(document.getElementById('drawer').classList.contains('show')) renderDrawer();
+}
+function bindPane(t,s){
+  const pane=document.getElementById('pane');
+  pane.querySelectorAll('[data-sel]').forEach(e=>e.onclick=()=>{state.sel=e.dataset.sel;state.tab='brief';render()});
+  pane.querySelectorAll('[data-tab]').forEach(e=>e.onclick=()=>{state.tab=e.dataset.tab;render()});
+  pane.querySelectorAll('[data-goact]').forEach(e=>e.onclick=()=>showPage('activity'));
+  pane.querySelectorAll('[data-exp]').forEach(e=>e.onclick=ev=>{if(ev.target.closest('a'))return; const k=e.dataset.exp; expanded.has(k)?expanded.delete(k):expanded.add(k); render();});
+  pane.querySelectorAll('[data-url]').forEach(a=>a.onclick=ev=>{ev.preventDefault();ev.stopPropagation();toast(`${L(OPENS[a.dataset.kind]||'op_web')}<br><code>${a.dataset.url}</code>`)});
+  pane.querySelectorAll('[data-run]').forEach(a=>a.onclick=ev=>{ev.stopPropagation();state.tab='claude';sessFilter='all';expRuns.add(a.dataset.run);render();document.getElementById('run-'+a.dataset.run)?.scrollIntoView({block:'center'})});
+  pane.querySelectorAll('[data-r]').forEach(e=>e.onclick=()=>{const k=e.dataset.r; expRuns.has(k)?expRuns.delete(k):expRuns.add(k); render();});
+  pane.querySelectorAll('[data-sf]').forEach(b=>b.onclick=()=>{sessFilter=b.dataset.sf;render()});
+  if(t){
+    pane.querySelectorAll('[data-undo]').forEach(a=>a.onclick=()=>{const c=t.chat[a.dataset.undo];
+      if(c.ref){const arr=c.refIn==='tl'?t.tl:t.ctx; const i=arr.indexOf(c.ref); if(i>=0)arr.splice(i,1);} else {const i=t.tl.findIndex(e=>e.w==='14:12'&&e.a==='me'); if(i>=0)t.tl.splice(i,1);}
+      c.undo=false; c.x=T('Undone.','已撤销。'); render();});
+    pane.querySelectorAll('[data-cf]').forEach(b=>b.onclick=()=>{const [i,v]=b.dataset.cf.split(':'); const c=t.chat[i]; c.cs=v; if(v==='ok') t.status='waiting'; render();});
+    pane.querySelectorAll('[data-chip]').forEach(b=>b.onclick=()=>{const i=document.getElementById('tIn'); i.value=L(b.dataset.chip); i.focus();});
+    const tIn=document.getElementById('tIn');
+    if(tIn){
+      tIn.onkeydown=e=>{if(e.key==='Enter')topicSend(t,tIn.value,false)};
+      document.getElementById('tSend').onclick=()=>topicSend(t,tIn.value,false);
+      document.getElementById('tmic').onclick=()=>{const m=document.getElementById('tmic'); m.classList.add('on'); tIn.placeholder=L('a_listen');
+        setTimeout(()=>topicSend(t,lang==='zh'?'加到时间线：SRE 开始回滚 us-east':'Add to timeline: SRE started the us-east rollback',true),1500);};
+    }
+  }
+  if(s){
+    pane.querySelectorAll('[data-part]').forEach(e=>e.onchange=()=>s.parts[e.dataset.part].target=e.value);
+    document.getElementById('confirmSort').onclick=()=>{
+      s.parts.forEach(p=>{
+        const art={ic:s.ic,t:tr(s.title)+(p.range?` (${p.range})`:''),s:p.q};
+        if(p.target==='ignore') return;
+        if(p.target==='new'){ topics.push({id:'n'+Date.now()+Math.random(),parent:null,urg:'P2',mode:'auto',status:'needs_me',title:p.newTitle,from:T('Sorted','归类'),when:T('just now','刚刚'),reason:T('Set by Claude after reading the context.','Claude 读完 context 后设置。'),brief:[],writing:true,ctx:[art],tl:[['now',T('Created from To sort','从“待归类”创建')]]}); }
+        else{ const d=get(p.target); d.ctx.push(art); d.tl.push(['now',T('Context added from '+s.title.en,'从「'+s.title.zh+'」加入 context')]); }
+      });
+      sortItems=sortItems.filter(x=>x!==s); state.sel=topics[0].id; render();
+    };
+    return;
+  }
+  if(!t) return;
+  pane.querySelectorAll('[data-urg]').forEach(b=>b.onclick=()=>{
+    if(t.mode==='auto') t.aiUrg=t.urg;
+    t.urg=b.dataset.urg; t.mode='manual'; t.until=T('I change it','我修改为止');
+    t.tl.push(['now',T('You set urgency to '+t.urg,'你把紧急程度改为 '+t.urg)]); render();});
+  const toAuto=document.getElementById('toAuto');
+  if(toAuto) toAuto.onclick=()=>{ t.mode='auto'; if(t.aiUrg) t.urg=t.aiUrg; render(); };
+  document.getElementById('status').onchange=e=>{t.status=e.target.value;render()};
+  const more=document.getElementById('moreBtn'),pop=document.getElementById('pop');
+  more.onclick=e=>{e.stopPropagation();pop.classList.toggle('show')};
+  pop.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>action(b.dataset.act,t));
+  const add=document.getElementById('addSub');
+  if(add) add.onclick=()=>newTopicDialog(t.id);
+}
+document.addEventListener('click',()=>{const p=document.getElementById('pop');if(p)p.classList.remove('show')});
+
+function modal(html,onOk,okLabel){
+  const d=document.getElementById('dialog');
+  d.innerHTML=html+`<div class="acts"><button class="btn" id="mCancel">${L('cancel')}</button><button class="btn primary" id="mOk">${okLabel||L('ok')}</button></div>`;
+  const m=document.getElementById('modal'); m.classList.add('show');
+  document.getElementById('mCancel').onclick=()=>m.classList.remove('show');
+  document.getElementById('mOk').onclick=()=>{onOk(d);m.classList.remove('show');render()};
+}
+document.getElementById('modal').onclick=e=>{if(e.target.id==='modal')e.target.classList.remove('show')};
+document.addEventListener('keydown',e=>{if(e.key==='Escape')document.getElementById('modal').classList.remove('show')});
+const topicOptions=(exclude)=>topics.filter(x=>x.id!==exclude&&x.parent!==exclude&&x.status!=='done').map(x=>`<option value="${x.id}">${x.parent?'↳ ':''}${esc(tr(x.title))}</option>`).join('');
+
+function action(a,t){
+  if(a==='merge') modal(`<h2>${L('merge')}</h2><div class="note">${L('mergeHint')}</div><label>${L('mergeTarget')}</label><select id="mt">${topicOptions(t.id)}</select>`,d=>{
+    const dst=get(d.querySelector('#mt').value);
+    dst.ctx.push(...t.ctx); dst.tl.push(...t.tl,['now',T('Merged "'+t.title.en+'" into this topic','把「'+t.title.zh+'」合并进来')]);
+    topics.forEach(k=>{if(k.parent===t.id)k.parent=dst.id});
+    topics=topics.filter(x=>x!==t); state.sel=dst.id;});
+  if(a==='split') modal(`<h2>${L('split')}</h2><label>${L('splitPick')}</label>${t.ctx.map((c,i)=>`<div class="chk"><input type="checkbox" data-ci="${i}"><span>${esc(tr(c.t))}</span></div>`).join('')}
+      <label>${L('splitTitle')}</label><input id="st"><label>${L('splitAs')}</label><select id="sa"><option value="top">${L('asTop')}</option><option value="sub">${L('asSub')}</option></select>`,d=>{
+    const idx=[...d.querySelectorAll('[data-ci]:checked')].map(x=>+x.dataset.ci);
+    const moved=t.ctx.filter((_,i)=>idx.includes(i)); t.ctx=t.ctx.filter((_,i)=>!idx.includes(i));
+    const name=d.querySelector('#st').value||'Untitled';
+    const n={id:'n'+Date.now(),parent:d.querySelector('#sa').value==='sub'?t.id:null,urg:t.urg,mode:'auto',status:'needs_me',title:T(name,name),from:t.from,when:T('just now','刚刚'),reason:T('Copied from the original topic.','沿用原事项。'),brief:[],writing:true,ctx:moved,tl:[['now',T('Split from "'+t.title.en+'"','从「'+t.title.zh+'」拆分出来')]]};
+    t.tl.push(['now',T('Split out "'+name+'"','拆分出「'+name+'」')]); topics.push(n); state.sel=n.id;});
+  if(a==='move') modal(`<h2>${L('moveUnder')}</h2><label>${L('parent')}</label><select id="mp">${topicOptions(t.id)}</select>`,d=>{t.parent=d.querySelector('#mp').value;});
+  if(a==='promote'){t.parent=null;render();}
+}
+function newTopicDialog(parentId){
+  modal(`<h2>${L('newTopic')}</h2><label>${L('title')}</label><input id="nt"><label>${L('source')}</label><textarea id="ns"></textarea>
+    <label>${L('parent')}</label><select id="np"><option value="">${L('none')}</option>${topicOptions('')}</select>`,d=>{
+    const name=d.querySelector('#nt').value||'Untitled', src=d.querySelector('#ns').value;
+    const n={id:'n'+Date.now(),parent:d.querySelector('#np').value||null,urg:'P2',mode:'auto',status:'needs_me',title:T(name,name),from:T('You','你'),when:T('just now','刚刚'),
+      reason:T('Claude will set this after reading the context.','Claude 读完 context 后会设置。'),brief:[],writing:true,
+      ctx:src?[{ic:'NO',t:T('Pasted','粘贴的内容'),s:src}]:[],tl:[['now',T('Created by you','你创建的')]]};
+    topics.push(n); state.sel=n.id; state.view='all';
+  },L('create'));
+  if(parentId) document.getElementById('np').value=parentId;
+}
+document.getElementById('newBtn').onclick=()=>newTopicDialog(null);
+
+function renderSettings(){
+  const rel=['manager','skip','peer','report','partner','other'], intr=['never','due','always'];
+  const people=[
+    ['Director','manager','@director','director@corp','Director',3.0,'due',T('Prefers 3-line updates. Cares about cost.','喜欢三行以内的更新，关注成本。')],
+    ['VP Eng','skip','@vp','vp@corp','VP Eng',3.0,'due',T('',  '')],
+    ['Partner team lead','partner','@partner-lead','lead@corp','Partner Lead',1.5,'never',T('Owns the API migration.','负责 API 迁移。')],
+    ['SRE lead','peer','@sre-lead','sre@corp','SRE Lead',1.5,'never',T('',  '')],
+    ['Report A','report','@report-a','a@corp','Report A',1.5,'never',T('Promo cycle this quarter.','这个季度在晋升周期。')],
+  ];
+  const s=document.getElementById('settings');
+  s.innerHTML=`<div class="crumb" id="backBtn">${L('back')}</div>
+   <h2>${L('s_people')}</h2><div class="d">${L('s_peopleD')}</div>
+   <table><tr><th>${L('c_name')}</th><th>${L('c_rel')}</th><th>${L('c_slack')}</th><th>${L('c_email')}</th><th>${L('c_zoom')}</th><th>${L('c_weight')}</th><th>${L('c_int')}</th><th>${L('c_notes')}</th></tr>
+   ${people.map(p=>`<tr><td><input value="${p[0]}"></td><td><select>${rel.map(r=>`<option ${r===p[1]?'selected':''}>${L('r_'+r)}</option>`).join('')}</select></td>
+     <td><input value="${p[2]}"></td><td><input value="${p[3]}"></td><td><input value="${p[4]}"></td><td><input class="n" value="${p[5].toFixed(1)}"></td>
+     <td><select>${intr.map(r=>`<option ${r===p[6]?'selected':''}>${L('i_'+r)}</option>`).join('')}</select></td><td><input value="${esc(tr(p[7]))}"></td></tr>`).join('')}
+   </table><div style="margin-top:8px"><button class="btn">${L('addPerson')}</button></div>
+
+   <h2>${L('s_rules')}</h2><div class="d">${L('s_rulesD')}</div>
+   <table><tr><th>${lang==='zh'?'条件':'If'}</th><th>${lang==='zh'?'结果':'Then'}</th></tr>
+   <tr><td>${lang==='zh'?'频道匹配 <code>#incident-*</code> 且提到我':'channel matches <code>#incident-*</code> and mentions me'}</td><td>P0</td></tr>
+   <tr><td>${lang==='zh'?'消息以 “FYI” 开头':'message starts with "FYI"'}</td><td>P3</td></tr>
+   <tr><td>${lang==='zh'?'我问的问题 2 个工作日没回复':'my question has no reply after 2 working days'}</td><td>${L('v_follow')}</td></tr></table>
+   <div style="margin-top:8px"><button class="btn">${lang==='zh'?'+ 添加规则':'+ Add rule'}</button></div>
+
+   <h2>${L('s_perm')}</h2><div class="d">${L('s_permD')}</div>
+   <div class="box">${[['p_brief','write_brief',1],['p_sum','summarize_artifact',1],['p_urg','set_auto_urgency',1],['p_due','set_due_date',1],['p_sort','prefill_sort_target',1],['p_rel','add_related_artifact',0]]
+     .map(([k,c,on])=>`<label class="perm"><input type="checkbox" ${on?'checked':''}><span>${L(k)} <code>${c}</code></span></label>`).join('')}</div>
+
+   <h2>${L('s_notif')}</h2>
+   <div class="box">${['n_int','n_p1','n_dig','n_fu'].map(k=>`<div class="perm"><span></span><span>${L(k)}</span></div>`).join('')}</div>
+
+   <h2>${L('s_lang')}</h2><div class="d">${L('s_langD')}</div>`;
+  document.getElementById('backBtn').onclick=()=>showPage('topics');
+}
+
+/* ---------- Knowledge ---------- */
+let kfiles=[
+ {id:'claude',name:'CLAUDE.md',upd:T('3 weeks ago','3 周前'),body:`# About me
+- Engineering Manager, Platform team (8 engineers).
+- Manager: Director of Platform. Skip-level: VP Eng.
+- I prefer short briefs: the ask first, then evidence.
+
+# Knowledge files
+- @knowledge/where-to-find.md
+- @knowledge/systems.md
+- @knowledge/team.md
+- @knowledge/people.md
+- @knowledge/me.md`},
+ {id:'me',name:'knowledge/me.md',upd:T('2 days ago','2 天前'),body:`# What I already know
+## Know well — do not explain
+- Incident process, on-call, SLOs
+- Hiring and promo process
+## Learning — explain in one line
+- Kubernetes autoscaling
+## New to me — explain fully with an example
+- Storage engine internals of the query service`},
+ {id:'where',name:'knowledge/where-to-find.md',upd:T('5 months ago','5 个月前'),old:true,body:`# Where to find things
+- Team space: Confluence → PLAT
+- Runbooks: Confluence → PLAT → Runbooks
+- Q3 roadmap: Confluence → PLAT → Planning → Q3 Roadmap
+- Postmortems: Confluence → ENG → Postmortems
+- Ingest dashboards: search "ingest workers" in the dashboard list`},
+ {id:'systems',name:'knowledge/systems.md',upd:T('2 months ago','2 个月前'),body:`# Systems we own
+## Ingest pipeline
+- Workers deploy weekly on Tuesdays.
+- Large tenants are sensitive to batch size changes.
+
+## API v1
+- Deprecated. Sunset date not decided yet.`},
+ {id:'team',name:'knowledge/team.md',upd:T('1 month ago','1 个月前'),body:`# Team norms
+- On-call: weekly rotation, handoff Monday 10:00.
+- Design reviews: Thursdays.
+- 1:1s: every two weeks; notes in each person's 1:1 doc.
+- Design reviews happen on Thursdays.`},
+ {id:'people',name:'knowledge/people.md',gen:true,upd:T('today','今天'),body:`# People (generated from Settings)
+- Director — manager. Prefers 3-line updates. Cares about cost.
+- VP Eng — skip-level.
+- Partner team lead — owns the API migration.
+- SRE lead — peer.
+- Report A — report. Promo cycle this quarter.`},
+];
+const kget=id=>kfiles.find(f=>f.id===id);
+let ksel='where', kres=null;
+const tidy={team:[{old:'\n- Design reviews happen on Thursdays.',neu:'',t:T('Remove duplicate: “Design reviews happen on Thursdays.”','删除重复的一行：“Design reviews happen on Thursdays.”')}]};
+const stale=[
+ {file:'where',old:'- Q3 roadmap: Confluence → PLAT → Planning → Q3 Roadmap',neu:'- Q1 planning: Confluence → PLAT → Planning → Q1 Planning',
+  t:T('“Q3 roadmap” was last confirmed 5 months ago. Your topic “Q1 headcount justification” uses the Q1 planning doc instead.','“Q3 roadmap” 最后一次确认是 5 个月前。你的事项「Q1 headcount 申请理由」用的是 Q1 规划文档。')},
+ {file:'systems',old:'- Deprecated. Sunset date not decided yet.',neu:'- Deprecated. Sunset date promised to the partner team by Thursday.',
+  t:T('“Sunset date not decided yet” may be out of date: the topic “API deprecation timeline” promises a date by Thursday.','“下线日期未定”可能过时了：事项「API 下线时间表」承诺周四前给出日期。')},
+];
+const learned=[
+ {file:'systems',line:'- Rollbacks can be done per region; SRE lead runs them (about 15 min).',src:T('from topic “Ingest error rate spike”','来自事项「Ingest 错误率飙升」')},
+ {file:'team',line:'- During incidents, send the Director a 3-line summary before staff meetings.',src:T('from topic “Update leadership on impact”','来自事项「向 leadership 同步影响」')},
+];
+function kitem(text,src,acts,done){
+  return `<div class="kitem ${done?'done':''}">${text}${src?`<div class="src">${src}</div>`:''}<div class="acts">${done?`<span class="note" style="margin:0">✓ ${L('k_doneLbl')}</span>`:acts}</div></div>`;
+}
+function renderKnowledge(){
+  const f=kget(ksel);
+  document.getElementById('kfiles').innerHTML=kfiles.map(x=>`<div class="kfile ${x.id===ksel?'sel':''}" data-kf="${x.id}"><div class="t">${x.name}</div><div class="m ${x.old?'old':''}">${L('k_upd')} ${tr(x.upd)}</div></div>`).join('');
+  document.getElementById('keditor').innerHTML=`<div class="note" style="margin:0">${L('k_note')}</div>
+    <b>${f.name}</b>${f.gen?`<div class="note" style="margin:0">${L('k_gen')}</div>`:''}
+    <textarea id="kta" ${f.gen?'readonly':''}>${esc(f.body)}</textarea><div class="note" style="margin:0">${L('k_saved')}</div>`;
+  let h=`<h3>${L('k_help')}</h3>
+    <button class="btn hb" id="kInterview">${L('k_interview')}</button><div class="d">${L('k_interviewD')}</div>
+    <button class="btn hb" id="kTidy" ${f.gen?'disabled':''}>${L('k_tidy')}</button>
+    <button class="btn hb" id="kStale">${L('k_stale')}</button>`;
+  if(kres==='tidy'){
+    const list=tidy[ksel]||[];
+    h+=list.length?list.map((x,i)=>kitem(tr(x.t),'',`<button class="btn sm primary" data-tidy="${i}">${L('k_apply')}</button><button class="btn sm" data-tidyskip="${i}">${L('k_skip')}</button>`,x.done)).join(''):`<div class="note">${L('k_none')}</div>`;
+  }
+  if(kres==='stale'){
+    h+=stale.map((x,i)=>kitem(tr(x.t)+`<div class="src">→ <code>${esc(x.neu)}</code></div>`,kget(x.file).name,
+      `<button class="btn sm primary" data-st="${i}:update">${L('k_update')}</button><button class="btn sm" data-st="${i}:still">${L('k_still')}</button><button class="btn sm" data-st="${i}:remove">${L('k_remove')}</button>`,x.done)).join('');
+  }
+  const open=learned.filter(x=>!x.done).length;
+  h+=`<div class="hr"></div><h3>${L('k_learned')} · ${open}</h3><div class="d">${L('k_learnedD')}</div>`;
+  h+=learned.map((x,i)=>kitem(`<code>${esc(x.line)}</code>`,`${L('k_to')} ${kget(x.file).name} · ${tr(x.src)}`,
+      `<button class="btn sm primary" data-ln="${i}:add">${L('k_add')}</button><button class="btn sm" data-ln="${i}:skip">${L('k_skip')}</button>`,x.done)).join('');
+  const kh=document.getElementById('khelp'); kh.innerHTML=h;
+  document.querySelectorAll('[data-kf]').forEach(e=>e.onclick=()=>{ksel=e.dataset.kf;kres=null;renderKnowledge()});
+  const ta=document.getElementById('kta'); ta.oninput=()=>f.body=ta.value;
+  document.getElementById('kInterview').onclick=()=>startInterview();
+  document.getElementById('kTidy').onclick=()=>{kres='tidy';renderKnowledge()};
+  document.getElementById('kStale').onclick=()=>{kres='stale';renderKnowledge()};
+  kh.querySelectorAll('[data-tidy]').forEach(b=>b.onclick=()=>{const x=tidy[ksel][b.dataset.tidy];f.body=f.body.replace(x.old,x.neu);x.done=true;renderKnowledge()});
+  kh.querySelectorAll('[data-tidyskip]').forEach(b=>b.onclick=()=>{tidy[ksel][b.dataset.tidyskip].done=true;renderKnowledge()});
+  kh.querySelectorAll('[data-st]').forEach(b=>b.onclick=()=>{
+    const [i,a]=b.dataset.st.split(':'); const x=stale[i], file=kget(x.file);
+    if(a==='update') file.body=file.body.replace(x.old,x.neu);
+    if(a==='remove') file.body=file.body.replace(x.old+'\n','').replace(x.old,'');
+    x.done=true; file.upd=T('just now','刚刚'); file.old=false; ksel=x.file; renderKnowledge();});
+  kh.querySelectorAll('[data-ln]').forEach(b=>b.onclick=()=>{
+    const [i,a]=b.dataset.ln.split(':'); const x=learned[i];
+    if(a==='add'){const file=kget(x.file); file.body+='\n'+x.line; file.upd=T('just now','刚刚'); ksel=x.file;}
+    x.done=true; renderKnowledge();});
+}
+
+/* ---------- Assistant ---------- */
+let amode='chat', act1='pending', iq=0;
+let msgs=[
+ {r:'u',voice:true,text:'SRE 的容量数据还没回吗？把跟进改到明天，再帮我写个催促。'},
+ {r:'a',f:()=>`${tr(T('No reply yet. You asked the SRE lead 2 working days ago.','还没有回复。你是两个工作日前问 SRE 负责人的。'))}
+   <div class="acard">${tr(T('Set follow-up of “Capacity numbers from SRE” to tomorrow','把「SRE 的容量数据」的跟进日期改到明天'))}
+   <div class="acts">${act1==='pending'?`<button class="btn sm primary" data-a="ok">${L('a_confirm')}</button><button class="btn sm" data-a="no">${L('a_cancel')}</button>`
+     :`<span class="note" style="margin:0">${act1==='done'?'✓ '+L('a_done'):L('a_cancelled')}</span>`}</div></div>
+   <div class="acard"><div class="note" style="margin:0 0 4px">${L('draft')}</div>${esc(tr(T('Hi, any update on the capacity numbers? I need them for the migration plan by Friday.','你好，容量数据有进展吗？我周五前要用在迁移计划里。')))}
+   <div class="acts"><button class="btn sm">${L('a_copy')}</button></div></div>`},
+ {r:'u',voice:false,text:'What do I need to finish before 16:00?'},
+ {r:'a',f:()=>`${tr(T('Two things, both under the incident:','两件，都在 incident 下面：'))}<ul>
+   <li><a data-goto="t1a">${esc(tr(get('t1a')?.title||T('Decide: rollback vs hotfix','决定：回滚还是等 hotfix')))}</a> — P0, ${tr(T('now','现在'))}</li>
+   <li><a data-goto="t1b">${esc(tr(get('t1b')?.title||T('Update leadership on impact','向 leadership 同步影响')))}</a> — P1, 16:00 · ${tr(T('draft is ready','草稿已准备好'))}</li></ul>`},
+];
+const questions=[
+ {q:T('Where does the Platform team keep design docs?','Platform 团队的设计文档放在哪里？'),file:'where',sample:'Confluence PLAT → Design Docs, one page per project'},
+ {q:T('Who approves API sunset dates: you or the Director?','API 下线日期由谁批准？你还是 Director？'),file:'systems',sample:'我提方案，Director 最后批准'},
+ {q:T('Is there anything about on-call that a new teammate would not know?','关于 on-call，有什么是新同事不知道的？'),file:'team',sample:'Night pages for the noisy tenant can wait until morning unless data is lost'},
+];
+let imsgs=[];
+function startInterview(){
+  amode='interview'; iq=0;
+  imsgs=[{r:'a',f:()=>tr(T('I found a few gaps. I will ask one question at a time; skip any you like.','我发现有几处缺的内容。我一次问一个问题，不想回答的可以跳过。'))},{r:'a',f:()=>tr(questions[0].q)}];
+  openDrawer(true);
+}
+function curTopic(){return page==='topics'?(get(state.sel)?tr(get(state.sel).title):tr((sortItems.find(s=>s.id===state.sel)||{}).title||'')):L(page==='knowledge'?'knowledge':'settings')}
+function renderDrawer(){
+  const list=amode==='interview'?imsgs:msgs;
+  document.getElementById('dctx').textContent=amode==='interview'?L('a_interviewCtx'):`${L('a_ctx')}: ${curTopic()}`;
+  const box=document.getElementById('msgs');
+  box.innerHTML=list.map(m=>m.r==='u'?`<div class="msg u">${m.voice?`<div class="v">🎙 ${L('a_voice')}</div>`:''}${esc(m.text)}</div>`:`<div class="msg a">${m.f()}</div>`).join('');
+  box.scrollTop=box.scrollHeight;
+  const inp=document.getElementById('dIn'); if(!inp.classList.contains('listening')) inp.placeholder=L('a_ph');
+  box.querySelectorAll('[data-a]').forEach(b=>b.onclick=()=>{
+    act1=b.dataset.a==='ok'?'done':'cancelled';
+    if(act1==='done'){const t=get('t4'); if(t){t.follow=''; t.tl.push(['now',T('Assistant moved follow-up to tomorrow (you confirmed)','助理把跟进日期改到明天（你已确认）')]);} if(page==='topics') render();}
+    renderDrawer();});
+  box.querySelectorAll('[data-goto]').forEach(a=>a.onclick=()=>{state.sel=a.dataset.goto;state.tab='brief';showPage('topics')});
+}
+function openDrawer(on){document.getElementById('drawer').classList.toggle('show',on); document.body.classList.toggle('dopen',on); if(on){renderDrawer();document.getElementById('dIn').focus();}}
+function sendMsg(text,voice){
+  if(!text.trim()) return;
+  if(amode==='interview'){
+    const q=questions[iq]; imsgs.push({r:'u',voice,text});
+    const file=kget(q.file); file.body+='\n- '+text; file.upd=T('just now','刚刚');
+    imsgs.push({r:'a',f:()=>`${tr(T('Saved to','已写入'))} <b>${file.name}</b>: <code>- ${esc(text)}</code>`});
+    iq++;
+    imsgs.push({r:'a',f:iq<questions.length?(n=>()=>tr(questions[n].q))(iq):()=>tr(T('That is all for now. Thanks!','先到这里，谢谢！'))});
+    if(page==='knowledge'){ksel=q.file;renderKnowledge();}
+  }else{
+    msgs.push({r:'u',voice,text}); msgs.push({r:'a',f:()=>L('a_mock')});
+  }
+  renderDrawer();
+}
+document.getElementById('asstBtn').onclick=()=>{if(amode!=='chat'&&iq>=questions.length) amode='chat'; openDrawer(!document.getElementById('drawer').classList.contains('show'))};
+document.getElementById('dClose').onclick=()=>{openDrawer(false); if(amode==='interview') amode='chat';};
+document.getElementById('dSend').onclick=()=>{const i=document.getElementById('dIn');sendMsg(i.value,false);i.value=''};
+document.getElementById('dIn').onkeydown=e=>{if(e.key==='Enter'){sendMsg(e.target.value,false);e.target.value=''}};
+document.getElementById('mic').onclick=()=>{
+  const mic=document.getElementById('mic'), inp=document.getElementById('dIn');
+  if(mic.classList.contains('on')) return;
+  mic.classList.add('on'); inp.classList.add('listening'); inp.value=''; inp.placeholder=L('a_listen');
+  const sample=amode==='interview'&&iq<questions.length?questions[iq].sample:(lang==='zh'?'明天早上提醒我看晋升材料':'Remind me tomorrow morning to review the promo packet');
+  setTimeout(()=>{mic.classList.remove('on');inp.classList.remove('listening');sendMsg(sample,true);},1600);
+};
+document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();document.getElementById('asstBtn').click();}});
+
+/* ---------- AI activity ---------- */
+const jobs=[
+ {t:'14:36',type:'topic',topic:'t3',model:'Sonnet',trig:T('Email reply received','收到邮件回复'),st:'running'},
+ {t:'14:36',type:'topic',topic:'t5',model:'Sonnet',trig:T('Transcript attached','加入了 transcript'),st:'queued'},
+ {t:'14:33',type:'topic',topic:'t1',model:'Sonnet',trig:T('3 new Slack messages (debounced 60 s)','3 条新 Slack 消息（防抖 60 秒）'),dur:'38 s',i:2140,o:1830,cr:61200,cw:4100,cost:0.21},
+ {t:'14:31',type:'meeting',topic:'t1',model:'Sonnet',trig:T('Bridge transcript file appeared','出现了 bridge 会议的 transcript 文件'),dur:'52 s',i:18400,o:2600,cr:12800,cw:9100,cost:0.17},
+ {t:'14:30',type:'triage',topic:null,model:'Haiku',trig:T('Batch of 7 unmatched messages','7 条未匹配消息的一批'),dur:'6 s',i:3100,o:420,cr:9400,cw:0,cost:0.01},
+ {t:'14:02',type:'invest',topic:'t1',model:'Opus',trig:T('P0 topic → investigate automatically','P0 事项 → 自动调查'),dur:'4 m 10 s',i:12000,o:9800,cr:410000,cw:38000,cost:1.92},
+ {t:'13:49',type:'topic',topic:'t1',model:'Sonnet',trig:T('New topic from #incident-4821','从 #incident-4821 新建事项'),dur:'41 s',i:6200,o:2100,cr:30100,cw:12000,cost:0.13},
+ {t:'13:45',type:'triage',topic:null,model:'Haiku',trig:T('Batch of 12 unmatched messages','12 条未匹配消息的一批'),dur:'7 s',i:4800,o:610,cr:9400,cw:0,cost:0.01},
+ {t:'12:56',type:'topic',topic:'t2',model:'Sonnet',trig:T('New DM from Director','Director 发来新私信'),dur:'1 m 05 s',i:8800,o:3400,cr:42000,cw:15000,cost:0.19},
+ {t:'11:05',type:'meeting',topic:null,model:'Sonnet',trig:T('Platform sync transcript','Platform sync 的 transcript'),dur:'1 m 12 s',i:31000,o:3900,cr:12800,cw:9100,cost:0.25},
+ {t:'09:00',type:'knowledge',topic:null,model:'Sonnet',trig:T('Daily knowledge check','每日知识库检查'),dur:'49 s',i:5100,o:1200,cr:28000,cw:6000,cost:0.08},
+];
+const sessions=[
+ {id:'3f2a91c0',type:'topic',topic:'t1',jobs:6,tok:'512k',cost:0.51,last:'14:33'},
+ {id:'a81d77e2',type:'invest',topic:'t1',jobs:1,tok:'470k',cost:1.92,last:'14:02'},
+ {id:'c09be4a1',type:'topic',topic:'t2',jobs:3,tok:'138k',cost:0.36,last:'12:56'},
+ {id:'5e6610fd',type:'topic',topic:'t3',jobs:4,tok:'96k',cost:0.22,last:'14:36'},
+ {id:'77ab02c9',type:'topic',topic:'t5',jobs:2,tok:'41k',cost:0.09,last:'Fri'},
+ {id:'d4c3b2a1',type:'assistant',topic:null,jobs:9,tok:'210k',cost:0.44,last:'14:20'},
+];
+let jfilter='all';
+const fmt=n=>n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?Math.round(n/1e3)+'k':String(n);
+function renderActivity(){
+  const done=jobs.filter(j=>j.cost!=null);
+  const sum=k=>done.reduce((a,j)=>a+j[k],0);
+  const topicName=id=>id&&get(id)?esc(tr(get(id).title)):'—';
+  const types=['triage','topic','invest','meeting','knowledge','assistant'];
+  const el=document.getElementById('activity');
+  el.innerHTML=`<h2 style="margin-top:0">${L('ac_today')}</h2>
+   <div class="tiles">
+    <div class="tile"><div class="k">${L('ac_jobs')}</div><div class="v">${done.length}</div><div class="s">${jobs.length-done.length} ${L('st_running')}/${L('st_queued')}</div></div>
+    <div class="tile"><div class="k">${L('ac_in')}</div><div class="v">${fmt(sum('i'))}</div></div>
+    <div class="tile"><div class="k">${L('ac_out')}</div><div class="v">${fmt(sum('o'))}</div></div>
+    <div class="tile"><div class="k">${L('ac_cache')}</div><div class="v">${fmt(sum('cr'))} / ${fmt(sum('cw'))}</div></div>
+    <div class="tile"><div class="k">${L('ac_cost')}</div><div class="v">$${sum('cost').toFixed(2)}</div><div class="s">${L('ac_costNote')}</div></div>
+   </div>
+
+   <h2>${L('ac_jobsT')}</h2><div class="d">${L('ac_queueD')}</div>
+   <div class="filters">${['all',...types].map(x=>`<button class="btn sm ${jfilter===x?'primary':''}" data-jf="${x}">${x==='all'?L('all'):L('ty_'+x)}</button>`).join('')}</div>
+   <table><tr><th>${L('c_time')}</th><th>${L('c_type')}</th><th>${L('c_topic')}</th><th>${L('c_trigger')}</th><th>${L('c_model')}</th><th class="num">${L('c_dur')}</th><th class="num">${L('c_tok')}</th><th class="num">${L('c_cost')}</th><th>${L('c_status')}</th></tr>
+   ${jobs.filter(j=>jfilter==='all'||j.type===jfilter).map(j=>`<tr><td>${j.t}</td><td>${L('ty_'+j.type)}</td><td>${topicName(j.topic)}</td><td>${esc(tr(j.trig))}</td><td>${j.model}</td>
+     <td class="num">${j.dur||'—'}</td><td class="num">${j.i!=null?`${fmt(j.i)} / ${fmt(j.o)} / ${fmt(j.cr+j.cw)}`:'—'}</td><td class="num">${j.cost!=null?'$'+j.cost.toFixed(2):'—'}</td>
+     <td>${j.st==='running'?`<span class="pill run">${L('st_running')}</span>`:j.st==='queued'?`<span class="pill">${L('st_queued')}</span>`:`<span class="pill">${L('st_ok')}</span>`}</td></tr>`).join('')}</table>
+
+   <h2>${L('ac_sessions')}</h2><div class="d">${L('ac_sessionsD')}</div>
+   <table><tr><th>${L('c_session')}</th><th>${L('c_type')}</th><th>${L('c_topic')}</th><th class="num">${L('ac_jobs')}</th><th class="num">Tokens</th><th class="num">${L('c_cost')}</th><th>${L('c_last')}</th><th></th></tr>
+   ${sessions.map(s=>`<tr><td><code>${s.id}</code></td><td>${L('ty_'+s.type)}</td><td>${topicName(s.topic)}</td><td class="num">${s.jobs}</td><td class="num">${s.tok}</td><td class="num">$${s.cost.toFixed(2)}</td><td>${s.last}</td>
+     <td style="white-space:nowrap"><button class="btn sm" data-tx="${s.id}">${L('viewT')}</button> <button class="btn sm" data-term="${s.id}">${L('openTerm')}</button></td></tr>`).join('')}</table>
+
+   <h2>${L('ac_types')}</h2>
+   <table><tr><th>${L('c_type')}</th><th>${L('c_purpose')}</th><th>${L('c_model')}</th><th>${L('c_life')}</th></tr>
+   ${types.map(x=>`<tr><td>${L('ty_'+x)}</td><td>${L('tyd_'+x)}</td><td>${{triage:'Haiku',invest:'Opus'}[x]||'Sonnet'}</td><td>${L('tyl_'+x)}</td></tr>`).join('')}</table>`;
+  el.querySelectorAll('[data-jf]').forEach(b=>b.onclick=()=>{jfilter=b.dataset.jf;renderActivity()});
+  el.querySelectorAll('[data-term]').forEach(b=>b.onclick=()=>infoModal(L('openTerm'),`<div class="note">${L('termNote')}</div><pre class="jsonl">cd ~/ManagerOS && claude --resume ${b.dataset.term}…</pre>`));
+  el.querySelectorAll('[data-tx]').forEach(b=>b.onclick=()=>infoModal(`${L('viewT')} · ${b.dataset.tx}`,`<pre class="jsonl">[user]  New activity on topic "Ingest error rate spike" (3 Slack messages, 13:58–14:32):
+        - on-call: hotfix ETA 40 min …
+[tool]  get_topic(t1)  → brief v2, 5 artifacts
+[tool]  read_artifact(#incident-4821) → 3 new messages
+[asst]  Hotfix ETA does not change impact; keep P0. Add rollback option.
+[tool]  set_auto_urgency(t1, P0, "hotfix ETA does not change impact")
+[tool]  write_brief(t1, brief_en, brief_zh) → ok
+[result] 38 s · in 2.1k · out 1.8k · cache read 61k · $0.21</pre>`));
+}
+function infoModal(title,html){
+  const d=document.getElementById('dialog');
+  d.innerHTML=`<h2>${title}</h2>${html}<div class="acts"><button class="btn" id="mCancel">${L('close')}</button></div>`;
+  document.getElementById('modal').classList.add('show');
+  document.getElementById('mCancel').onclick=()=>document.getElementById('modal').classList.remove('show');
+}
+
+/* ---------- Pages ---------- */
+let page='topics';
+function showPage(p){
+  page=p;
+  document.getElementById('main').style.display=p==='topics'?'':'none';
+  document.getElementById('settings').style.display=p==='settings'?'block':'none';
+  document.getElementById('activity').style.display=p==='activity'?'block':'none';
+  document.getElementById('knowledge').style.display=p==='knowledge'?'':'none';
+  document.querySelectorAll('[data-page]').forEach(b=>b.classList.toggle('on',b.dataset.page===p));
+  refresh();
+}
+function refresh(){
+  renderStatic();
+  if(page==='topics') render(); else if(page==='settings') renderSettings(); else if(page==='activity') renderActivity(); else renderKnowledge();
+  if(document.getElementById('drawer').classList.contains('show')) renderDrawer();
+}
+document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>showPage(b.dataset.page));
+document.getElementById('setBtn').onclick=()=>showPage(page==='settings'?'topics':'settings');
+document.getElementById('view').onchange=e=>{state.view=e.target.value;render()};
+document.getElementById('q').oninput=e=>{state.q=e.target.value;renderList()};
+document.querySelectorAll('[data-lang]').forEach(b=>b.onclick=()=>{
+  lang=b.dataset.lang;
+  document.querySelectorAll('[data-lang]').forEach(x=>x.classList.toggle('on',x===b));
+  refresh();
+});
+render();
+</script>
+</body>
+</html>

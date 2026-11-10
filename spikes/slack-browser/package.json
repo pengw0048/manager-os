@@ -1,0 +1,11 @@
+{
+  "name": "slack-browser-spike",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node spike.mjs"
+  },
+  "dependencies": {
+    "playwright": "1.64.1"
+  }
+}

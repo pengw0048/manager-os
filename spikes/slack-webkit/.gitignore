@@ -1,0 +1,4 @@
+.build/
+events.jsonl
+spike.log
+spike.*.log

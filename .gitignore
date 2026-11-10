@@ -1,0 +1,5 @@
+.DS_Store
+# Spike logs and browser profiles hold real Slack data.
+spikes/**/*.log
+spikes/**/events.jsonl
+spikes/**/.profile/

@@ -69,6 +69,7 @@ enum TitlebarDoubleClick {
             }
             return
         }
+        if ProcessInfo.processInfo.environment["MOS_DEBUG_CLOSE"] == "1" { main()?.performClose(nil); await wait(2); print("[close] main=\(main() != nil)"); m.openMain?(); await wait(2); print("[reopen] main=\(main() != nil)"); fflush(stdout); return }
         if let link = ProcessInfo.processInfo.environment["MOS_DEBUG_LINK"] {
             m.createTopic(title: "", text: "", url: link, requester: "", parent: nil)
             await wait(12); shot("link-context-before-brief"); m.tab = .ctx; await wait(1); shot("link-context")

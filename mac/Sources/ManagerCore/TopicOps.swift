@@ -265,9 +265,10 @@ public enum TopicOps {
     }
 
     /// Slack messages logged in (after, until]: what a brief job saw that the previous brief did not.
+    /// Replies in a mapped thread log "event"; a new conversation filed into the topic (e.g. a top-level DM) logs "context".
     public static func hasSlackNews(_ store: Store, _ id: String, after: String?, until: String) -> Bool {
         guard let after else { return false }
-        return store.timeline(of: id).contains { $0.actor == "slack" && $0.kind == "event" && $0.at > after && $0.at <= until }
+        return store.timeline(of: id).contains { $0.actor == "slack" && ($0.kind == "event" || $0.kind == "context") && $0.at > after && $0.at <= until }
     }
 
     /// Apply a brief from Claude. Manual urgency, her title, and dates she set are never overwritten.

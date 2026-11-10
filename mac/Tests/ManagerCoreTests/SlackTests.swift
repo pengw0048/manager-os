@@ -288,4 +288,17 @@ import GRDB
         #expect(TopicOps.senderWeight(e.store, "Robert Smith (PM)") == 3)
         #expect(TopicOps.senderWeight(e.store, "Someone") == 1)
     }
+
+    @Test func newTopLevelDMFiledToAWaitingTopicBringsItBack() async throws {
+        let (e, s) = try setup()
+        guard case .toSort(let a) = try s.ingest(ev("D1", "1.0", text: "can you review"), now: Date().addingTimeInterval(-7200)) else { return }
+        let t = try s.accept(a, topicId: nil, newTitle: "Review")
+        await e.queue.enqueueBrief(t, trigger: ("t", "t")); await e.queue.idle()
+        var p = TopicPatch(); p.status = .waiting; try TopicOps.patch(e.store, t, p)
+        guard case .toSort(let b) = try s.ingest(ev("D1", "2.0", text: "STATUS:needs_me done, please look")) else { return }
+        try s.accept(b, topicId: t, auto: true)
+        await e.queue.enqueueBrief(t, trigger: ("filed", "filed")); await e.queue.idle()
+        #expect(e.store.topic(t)?.status == .needsMe)
+    }
 }
+

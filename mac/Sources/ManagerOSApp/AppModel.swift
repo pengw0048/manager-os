@@ -122,7 +122,7 @@ final class AppModel {
         let kids = Dictionary(grouping: all.filter { $0.parentId != nil }, by: { $0.parentId! })
         let news = Set((try? store.read { try String.fetchAll($0, sql: """
             select distinct t.id from topics t join timeline e on e.topic_id = t.id
-            where e.actor = 'slack' and e.kind = 'event' and t.last_brief_at is not null and e.at > t.last_brief_at
+            where e.actor = 'slack' and e.kind in ('event','context') and t.last_brief_at is not null and e.at > t.last_brief_at
             """) }) ?? [])
         rows = all.map { t in
             let p = TopicOps.person(ppl, requester: t.requester, slackIds: ids[t.requester.lowercased()] ?? [])

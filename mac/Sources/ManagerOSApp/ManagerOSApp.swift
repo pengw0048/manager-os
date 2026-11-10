@@ -75,17 +75,16 @@ enum TitlebarDoubleClick {
             return
         }
         main()?.setFrame(NSRect(x: 80, y: 80, width: 1360, height: 860), display: true)
-        m.view = .all; await wait(1); shot("1-brief")
-        m.tab = .ctx; await wait(1); shot("2-context")
-        m.tab = .tl; await wait(1); shot("3-timeline")
-        m.tab = .claude; await wait(1); shot("4-claude")
-        m.showingSort = true; await wait(1.5); shot("5-to-sort"); m.showingSort = false
-        m.page = .topics; m.tab = .brief; m.lang = "zh"
-        main()?.setFrame(NSRect(x: 80, y: 80, width: 990, height: 860), display: true)
-        await wait(1); shot("6a-narrow"); m.showAssistant = true; await wait(1.5); shot("6-zh-assistant")
-        m.showAssistant = false; m.searchText = "回滚"; await wait(1.5); shot("7-search")
-        m.searchText = ""; m.lang = "en"
-        m.tab = .tl; await wait(1); shot("8-timeline-zh"); m.lang = "en"; m.tab = .claude; await wait(1); shot("9-ask")
+        func open(_ id: String, _ tab: DetailTab = .brief) async { if m.store.topic(id) != nil { m.select(id); m.tab = tab; await wait(1.2) } }
+        await wait(1); shot("1-default")
+        m.view = .all; await wait(1); shot("2-all-open")
+        if m.catchup != nil { m.showingCatchup = true; await wait(1.2); shot("3-catchup"); m.showingCatchup = false }
+        if !m.toSort.isEmpty || !m.autoSorted.isEmpty { m.showingSort = true; await wait(1.5); shot("4-to-sort"); m.showingSort = false }
+        for (i, id) in (ProcessInfo.processInfo.environment["MOS_SNAP_TOPICS"] ?? "").split(separator: ",").enumerated() {
+            let parts = id.split(separator: ":").map(String.init)
+            await open(parts[0], DetailTab(rawValue: parts.count > 1 ? parts[1] : "brief") ?? .brief); shot("t\(i + 1)-\(parts.joined(separator: "-"))")
+        }
+        m.lang = m.lang == "zh" ? "en" : "zh"; m.view = .needs; await wait(1.2); shot("9-other-language")
     }
 }
 #endif
@@ -165,12 +164,11 @@ struct ContentView: View {
         .toolbarBackground(.hidden, for: .windowToolbar) // content runs up under the toolbar, so no band or line ends at the sidebar edge
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                Button { m.pasteAsTopic() } label: { Label(m.L("pasteShort"), systemImage: "doc.on.clipboard") }.help(m.L("pasteTopicHelp"))
-                Button { m.sheet = .newTopic(parent: nil) } label: { Label(m.L("newTopic"), systemImage: "plus") }.help(m.L("newTopic") + " ⌘N")
-                Button { m.showAssistant.toggle() } label: { Label(m.L("assistant"), systemImage: "bubble.left.and.text.bubble.right") }.help(m.L("assistant") + " ⌘K")
+                Button { m.pasteAsTopic() } label: { Label(m.L("pasteShort"), systemImage: "doc.on.clipboard").labelStyle(.titleAndIcon) }.help(m.L("pasteTopicHelp"))
+                Button { m.sheet = .newTopic(parent: nil) } label: { Label(m.L("newTopic"), systemImage: "plus").labelStyle(.titleAndIcon) }.help(m.L("newTopic") + " ⌘N")
+                Button { m.showAssistant.toggle() } label: { Label(m.L("assistant"), systemImage: "bubble.left.and.text.bubble.right").labelStyle(.titleAndIcon) }.help(m.L("assistant") + " ⌘K")
             }
         }
-        .labelStyle(.titleAndIcon)
         .onAppear { m.openMain = { openWindow(id: "main") } }
         .sheet(item: $m.sheet) { SheetHost(kind: $0).environment(m) }
         .confirmationDialog(m.L("deleteQ"), isPresented: Binding(get: { m.deleting != nil }, set: { if !$0 { m.deleting = nil } }), presenting: m.deleting) { id in

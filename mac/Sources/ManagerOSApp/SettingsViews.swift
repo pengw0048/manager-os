@@ -177,7 +177,7 @@ struct PeoplePane: View {
                 TableColumn(m.L("c_name")) { p in Text(p.name.isEmpty ? "—" : p.name) }
                 TableColumn(m.L("c_rel")) { p in Text(m.L("r_" + p.relationship)) }.width(90)
                 TableColumn(m.L("c_weight")) { p in Text(p.weight.formatted()).monospacedDigit() }.width(50)
-                TableColumn("Slack") { p in Text(p.slack).foregroundStyle(.secondary) }.width(110)
+                TableColumn("Slack") { p in Text(m.slackNames[p.slack] ?? p.slack).foregroundStyle(.secondary) }.width(110)
                 TableColumn(m.L("c_int")) { p in Text(m.L("i_" + p.canInterrupt)) }.width(90)
             }
             .contextMenu(forSelectionType: String.self) { ids in
@@ -212,10 +212,16 @@ struct PersonSheet: View {
                     Picker(m.L("c_int"), selection: $person.canInterrupt) { ForEach(["never", "if_due_today", "always"], id: \.self) { Text(m.L("i_" + $0)).tag($0) } }
                 } footer: { footnote(m.L("weightHelp")) }
                 Section {
-                    TextField(m.L("c_slack"), text: $person.slack, prompt: Text("U012AB3CD"))
-                    TextField(m.L("c_email"), text: $person.email)
-                    TextField(m.L("c_zoom"), text: $person.zoom)
-                } footer: { footnote(m.L("c_slackD")) }
+                    LabeledContent(m.L("c_slackAccount")) {
+                        HStack(spacing: 8) {
+                            if !person.slack.isEmpty {
+                                Text(m.slackNames[person.slack].map { "\($0) · \(person.slack)" } ?? person.slack).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            SlackUserPicker { pick($0) }
+                        }
+                    }
+                    if !person.email.isEmpty { LabeledContent(m.L("c_email"), value: person.email) }
+                } footer: { footnote(m.L(m.slackCtl.isConnected ? "c_slackD" : "c_slackOffD")) }
                 Section {
                     TextField(m.L("c_notes"), text: $person.notes, prompt: Text(m.L("c_notesPh")), axis: .vertical).lineLimit(2...4)
                 }
@@ -225,6 +231,48 @@ struct PersonSheet: View {
         .toolbar { SheetActions { m.savePerson(person) } }
         .frame(width: 460, height: 520)
     }
+
+    /// Sets the Slack ID, then fills the name (when empty) and email from the Slack profile.
+    func pick(_ id: String) {
+        person.slack = id
+        if person.name.isEmpty, let n = m.slackNames[id] { person.name = n }
+        Task {
+            guard let p = await m.slackCtl.profile(id) else { return }
+            if person.name.isEmpty || person.name == m.slackNames[id] { person.name = p.name.isEmpty ? p.display : p.name }
+            person.email = p.email
+        }
+    }
+}
+
+/// Search the Slack users the app has seen; a pasted member ID works for anyone else.
+struct SlackUserPicker: View {
+    @Environment(AppModel.self) var m
+    let pick: (String) -> Void
+    @State private var open = false
+    @State private var query = ""
+    var body: some View {
+        Button(m.L("pickFromSlack")) { query = ""; open = true }
+            .popover(isPresented: $open) {
+                let q = query.trimmingCharacters(in: .whitespaces)
+                let users = m.slackNames.filter { q.isEmpty || $0.value.localizedCaseInsensitiveContains(q) || $0.key.localizedCaseInsensitiveContains(q) }
+                    .sorted { $0.value.localizedCompare($1.value) == .orderedAscending }
+                VStack(alignment: .leading, spacing: 6) {
+                    TextField(m.L("searchPeople"), text: $query).textFieldStyle(.roundedBorder)
+                    List {
+                        if q.range(of: #"^[UW][A-Z0-9]{6,}$"#, options: .regularExpression) != nil, m.slackNames[q] == nil {
+                            Button(m.L("useId").replacingOccurrences(of: "{id}", with: q)) { choose(q) }.buttonStyle(.plain)
+                        }
+                        ForEach(users.prefix(200), id: \.key) { id, name in
+                            Button { choose(id) } label: {
+                                HStack { Text(name); Spacer(); Text(id).font(.caption.monospaced()).foregroundStyle(.secondary) }.contentShape(Rectangle())
+                            }.buttonStyle(.plain)
+                        }
+                    }.listStyle(.plain)
+                    footnote(m.L("slackPickHint"))
+                }.padding(10).frame(width: 340, height: 360)
+            }
+    }
+    func choose(_ id: String) { open = false; pick(id) }
 }
 
 // MARK: AI models

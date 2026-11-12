@@ -124,6 +124,14 @@ final class SlackController: NSObject {
 
     var isConnected: Bool { signedIn && webView != nil }
 
+    /// Name and email from a Slack profile; email is empty when the workspace hides it.
+    func profile(_ userId: String) async -> (name: String, display: String, email: String)? {
+        guard isConnected, let wv = webView else { return nil }
+        let r = try? await wv.callAsyncJavaScript("return await window.__mos?.profile(id);", arguments: ["id": userId], in: nil, contentWorld: .page)
+        guard let d = r as? [String: Any] else { return nil }
+        return (d["real_name"] as? String ?? "", d["display"] as? String ?? "", d["email"] as? String ?? "")
+    }
+
     /// Reads a whole thread from inside the page (for a pasted Slack link).
     func fetchThread(channel: String, threadTs: String) async -> [SlackEvent]? {
         guard let wv = webView else { return nil }
@@ -261,6 +269,12 @@ final class SlackController: NSObject {
           const ug = await api('usergroups.list', { include_users: 'true' });
           const groups = (ug.usergroups || []).filter((g) => (g.users || []).includes(j.user_id)).map((g) => g.id);
           return { user_id: j.user_id, team: j.team, url: j.url, self_dm: im.channel?.id || null, groups };
+        },
+        async profile(id) {
+          const j = await api('users.info', { user: id });
+          if (!j.ok) return null;
+          const p = j.user?.profile || {};
+          return { real_name: j.user?.real_name || p.real_name || '', display: p.display_name || '', email: p.email || '' };
         },
         async thread(channel, ts) {
           const j = await api('conversations.replies', { channel, ts, limit: '200' });

@@ -665,7 +665,8 @@ M0 is useful on day one before any source integration exists.
   three due reminders become one notification. A person marked "Can interrupt: always" (or "if due today" on a
   topic due today) gets sound and time-sensitive delivery. "Breaks focus" waits for focus mode (not built).
 - **Sender weight** matches Settings → People by Slack user ID or handle first, then by name; the topic page
-  shows the weight in effect. A parent scores at least as urgent as its open sub-topics.
+  shows the weight in effect. A person is linked by choosing their Slack account; name and email come from the Slack
+  profile (email is empty if the workspace hides it). The Zoom name field is hidden until transcripts are imported. A parent scores at least as urgent as its open sub-topics.
 - **"While you were away" and digests.** One view of what changed since a time, built from the timeline
   without AI: topics with entries she did not write (Slack messages, automatic status and urgency changes,
   conversations filed automatically), highest score first, new topics marked. It opens after 30 minutes

@@ -362,7 +362,8 @@ M0 uses structured output instead of an MCP server; MCP is deferred.
   (`set_status`, `set_urgency`, `set_followup`) and every assistant action wait for Confirm.
 - Measured (Sonnet, one incident topic): effort `high` (default) took 129 s, 14.8k output tokens,
   $0.27; effort `low` took 19 s, 2.3k output tokens, $0.08 with similar brief quality. Defaults:
-  brief `low`, chat `medium`, assistant `low` (env `MOS_EFFORT_*`).
+  brief `low`, chat `high`, assistant `medium` (env `MOS_EFFORT_*`). Models: Opus for brief, chat,
+  assistant and digest; Sonnet for search and triage (env `MOS_MODEL_*`).
 - Prompt cache: brief → brief on the same session read 12.6k cached tokens and wrote 2.2k. Brief
   and chat use different system prompts and schemas, so a chat turn after a brief does not hit
   the cache. Possible later fix: one system prompt and one union schema for the topic session.
@@ -555,7 +556,7 @@ One search box at the top of the topic list (⌘F). Two modes:
 | Mode | How | When |
 |------|-----|------|
 | Keyword (instant, no AI) | SQLite FTS5 (`unicode61`) over a bigram-expanded copy of topic titles and briefs (en + zh), context items (title, content, summaries), timeline summaries, and chat text. Before indexing, each run of CJK characters is expanded into its single characters plus overlapping bigrams (`回滚计划` → `回 滚 计 划 回滚 滚计 计划`); Latin text stays as words. The query is expanded the same way and matched as a phrase, so `回滚` and `rollback pla*` both work. Results are ranked with BM25 and grouped by topic with a snippet. | As you type |
-| AI search | One Haiku call (`--effort low`, no tools, `--json-schema`) with the query plus a compact index of all topics, done ones included: id, titles, status, urgency, dates, first lines of the brief, context summaries. Returns ranked topic ids, a one-line reason each (en + zh), and an optional short answer. The index is sent as the system prompt and the query as the message, so repeated searches can read the index from the cache. Archived topics are included only when asked; above 150 topics, keyword matches and the most recent topics are sent first. | Press Enter on "Ask AI", or when keyword search finds nothing |
+| AI search | One Sonnet call (`--effort low`, no tools, `--json-schema`) with the query plus a compact index of all topics, done ones included: id, titles, status, urgency, dates, first lines of the brief, context summaries. Returns ranked topic ids, a one-line reason each (en + zh), and an optional short answer. The index is sent as the system prompt and the query as the message, so repeated searches can read the index from the cache. Archived topics are included only when asked; above 150 topics, keyword matches and the most recent topics are sent first. | Press Enter on "Ask AI", or when keyword search finds nothing |
 
 Examples AI search handles and keyword search does not: "the thing about the partner team's
 API date", "上个月和 SRE 讨论容量的那个", "what did I promise the Director last week". The

@@ -8,9 +8,9 @@ public struct AIConfig: Sendable {
         let env = ProcessInfo.processInfo.environment
         func v(_ k: String, _ d: String) -> String { env[k].flatMap { $0.isEmpty ? nil : $0 } ?? d }
         return AIConfig(
-            model: ["brief": v("MOS_MODEL_BRIEF", "sonnet"), "chat": v("MOS_MODEL_CHAT", "sonnet"), "assistant": v("MOS_MODEL_ASSISTANT", "sonnet"),
-                    "search": v("MOS_MODEL_SEARCH", "haiku"), "triage": v("MOS_MODEL_TRIAGE", "haiku"), "digest": v("MOS_MODEL_DIGEST", "sonnet")],
-            effort: ["brief": v("MOS_EFFORT_BRIEF", "low"), "chat": v("MOS_EFFORT_CHAT", "medium"), "assistant": v("MOS_EFFORT_ASSISTANT", "low"),
+            model: ["brief": v("MOS_MODEL_BRIEF", "opus"), "chat": v("MOS_MODEL_CHAT", "opus"), "assistant": v("MOS_MODEL_ASSISTANT", "opus"),
+                    "search": v("MOS_MODEL_SEARCH", "sonnet"), "triage": v("MOS_MODEL_TRIAGE", "sonnet"), "digest": v("MOS_MODEL_DIGEST", "opus")],
+            effort: ["brief": v("MOS_EFFORT_BRIEF", "low"), "chat": v("MOS_EFFORT_CHAT", "high"), "assistant": v("MOS_EFFORT_ASSISTANT", "medium"),
                      "search": v("MOS_EFFORT_SEARCH", "low"), "triage": v("MOS_EFFORT_TRIAGE", "low"), "digest": v("MOS_EFFORT_DIGEST", "low")])
     }
 }
@@ -319,7 +319,7 @@ public actor JobQueue {
         try store.write(topics: [c.topicId]) { try c.update($0) }
     }
 
-    /// Pre-fill a target topic for "To sort" items (one Haiku call for the batch). Accepting stays her decision.
+    /// Pre-fill a target topic for "To sort" items (one call for the batch). Accepting stays her decision.
     @discardableResult
     public func triage(_ slack: SlackIngest, now: Date = Date()) async throws -> Int {
         guard !triageRunning else { return 0 }

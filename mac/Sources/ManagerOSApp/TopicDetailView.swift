@@ -581,8 +581,6 @@ struct BriefView: View {
 
     static func kind(_ h: String) -> String {
         let s = h.lowercased()
-        if ["known", "已知"].contains(where: s.contains) { return "fold" }
-        if ["open question", "待确认", "问题"].contains(where: s.contains) { return "fold" }
         if ["draft", "草稿"].contains(where: s.contains) { return "draft" }
         return "open"
     }
@@ -591,10 +589,6 @@ struct BriefView: View {
         VStack(alignment: .leading, spacing: 14) {
             ForEach(sections) { sec in
                 switch BriefView.kind(sec.heading) {
-                case "fold":
-                    DisclosureGroup { MarkdownText(text: sec.body).padding(.top, 4) } label: {
-                        Text(sec.heading).font(.callout.weight(.semibold)).foregroundStyle(.secondary)
-                    }
                 case "draft":
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {

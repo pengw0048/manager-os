@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         TitlebarDoubleClick.install()
+        GlobalHotKey.install()
         #if DEBUG
         if let dir = ProcessInfo.processInfo.environment["MOS_SNAPSHOTS"] { Task { @MainActor in await DebugSnapshots.run(dir: dir) } }
         #endif

@@ -42,6 +42,8 @@ public struct ClaudeRunner: Sendable {
     }
 
     public func run(_ r: ClaudeRequest) async throws -> ClaudeResult {
+        KeepAwake.shared.begin()
+        defer { KeepAwake.shared.end() }
         do { return try await once(r) } catch let e as ClaudeError where e.message.hasPrefix("unparseable") { return try await once(r) }
     }
 

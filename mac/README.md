@@ -7,6 +7,8 @@ same database schema as M0, so existing data carries over.
 
 ## Build and run
 
+To set it up on another Mac, give that Mac's Claude Code [INSTALL.md](INSTALL.md): it builds from source there.
+
 Requires full Xcode for the app target (SwiftUI's `@State` macro ships only with Xcode). The core
 library and its tests build with Command Line Tools alone.
 

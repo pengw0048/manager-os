@@ -351,4 +351,15 @@ struct Env {
         Catchup.markRead(e.store)
         #expect(Catchup.pending(e.store) == nil)
     }
+
+    @Test func keepAwakeHoldsOnlyWhileCallsRun() throws {
+        let k = KeepAwake()
+        k.begin(); k.begin()
+        #expect(k.isHolding)
+        k.end()
+        #expect(k.isHolding)
+        k.end()
+        #expect(!k.isHolding)
+    }
 }
+

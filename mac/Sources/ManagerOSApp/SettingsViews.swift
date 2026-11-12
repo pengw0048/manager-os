@@ -1,4 +1,5 @@
 import SwiftUI
+import ServiceManagement
 import ManagerCore
 
 /// Settings as toolbar panes (Apple HIG): one group of related settings per pane, label on the left and control on the right.
@@ -28,12 +29,15 @@ struct GeneralPane: View {
     @State private var digests = true
     @State private var morning = Date()
     @State private var evening = Date()
+    @State private var atLogin = SMAppService.mainApp.status == .enabled
+    @State private var loginError: String?
     var body: some View {
         @Bindable var m = m
         Form {
             Section {
                 Picker(m.L("s_lang"), selection: $m.lang) { Text("English").tag("en"); Text("中文").tag("zh") }
-            }
+                Toggle(m.L("loginItem"), isOn: Binding(get: { atLogin }, set: { setLogin($0) }))
+            } footer: { footnote(loginError ?? m.L("loginItemD")) }
             Section {
                 Toggle(m.L("dg_on"), isOn: $digests).onChange(of: digests) { m.store.setSetting("digest_enabled", digests ? "1" : "0") }
                 DatePicker(m.L("cu_morning"), selection: $morning, displayedComponents: .hourAndMinute).disabled(!digests)
@@ -52,7 +56,13 @@ struct GeneralPane: View {
             evening = Catchup.at(m.store.setting("digest_evening") ?? Catchup.defaultEvening, on: Date()) ?? Date()
         }
     }
-    func hm(_ d: Date) -> String { let c = Calendar.current.dateComponents([.hour, .minute], from: d); return String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0) }
+    /// Registers the app as a login item, so Slack keeps being read after a restart.
+    func setLogin(_ on: Bool) {
+        do { if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }; loginError = nil }
+        catch { loginError = m.L("loginItemFailed") + " " + error.localizedDescription }
+        atLogin = SMAppService.mainApp.status == .enabled
+    }
+        func hm(_ d: Date) -> String { let c = Calendar.current.dateComponents([.hour, .minute], from: d); return String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0) }
 }
 
 struct SlackPane: View {
